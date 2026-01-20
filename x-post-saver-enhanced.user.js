@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.3.1
+// @version      0.3.2
 // @description  Adds a "Save" button to posts on X.com. Saved posts are stored locally and can be exported as JSONL (NDJSON).
 // @match        https://x.com/*
 // @grant        none
@@ -518,6 +518,24 @@
       }
     }
 
+    // Quoted/embedded posts sometimes don't render a <time> element.
+    const statusLinks = tweetElement.querySelectorAll ? tweetElement.querySelectorAll('a[href*="/status/"]') : [];
+    for (const link of statusLinks) {
+      if (containerArticle) {
+        const closestArticle = link.closest('article');
+        if (closestArticle && closestArticle !== containerArticle) continue;
+      }
+
+      const href = link.getAttribute ? link.getAttribute('href') : null;
+      if (!href) continue;
+
+      try {
+        return new URL(href, 'https://x.com').toString();
+      } catch {
+        // ignore
+      }
+    }
+
     return null;
   }
 
@@ -923,6 +941,24 @@
     if (!tweetArticle || !tweetArticle.querySelectorAll) return null;
 
     const outerNorm = normalizeUrlForCompare(outerUrl);
+
+    // Some layouts wrap the quoted post in a dedicated container.
+    const embedded = tweetArticle.querySelector(
+      '[data-testid="embeddedTweet"], div[aria-label="Embedded Tweet"], div[aria-label="Embedded Post"], div[aria-label="Embedded post"]'
+    );
+
+    if (embedded) {
+      let root = embedded;
+      if (embedded.matches && embedded.matches('article')) {
+        root = embedded;
+      } else if (embedded.querySelector) {
+        root = embedded.querySelector('article') || embedded;
+      }
+
+      const url = getTweetPermalink(root);
+      if (url && normalizeUrlForCompare(url) !== outerNorm) return root;
+    }
+
     const articles = tweetArticle.querySelectorAll('article');
 
     for (const article of articles) {
