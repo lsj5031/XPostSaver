@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.2.0
+// @version      0.3.1
 // @description  Adds a "Save" button to posts on X.com. Saved posts are stored locally and can be exported as JSONL (NDJSON).
 // @match        https://x.com/*
 // @grant        none
@@ -54,6 +54,58 @@
 
       seen.add(url);
 
+      const links = Array.isArray(item.links)
+        ? item.links
+            .filter((l) => typeof l === 'string')
+            .map((l) => l.trim())
+            .filter(Boolean)
+        : [];
+
+      const media = Array.isArray(item.media)
+        ? item.media
+            .filter((m) => m && typeof m === 'object')
+            .map((m) => ({
+              type: typeof m.type === 'string' ? m.type : '',
+              url: typeof m.url === 'string' ? m.url.trim() : '',
+            }))
+            .filter((m) => m.url)
+        : [];
+
+      let quoted = null;
+      if (item.quoted && typeof item.quoted === 'object') {
+        const q = item.quoted;
+
+        const qLinks = Array.isArray(q.links)
+          ? q.links
+              .filter((l) => typeof l === 'string')
+              .map((l) => l.trim())
+              .filter(Boolean)
+          : [];
+
+        const qMedia = Array.isArray(q.media)
+          ? q.media
+              .filter((m) => m && typeof m === 'object')
+              .map((m) => ({
+                type: typeof m.type === 'string' ? m.type : '',
+                url: typeof m.url === 'string' ? m.url.trim() : '',
+              }))
+              .filter((m) => m.url)
+          : [];
+
+        const qUrl = typeof q.url === 'string' ? q.url : '';
+        if (qUrl) {
+          quoted = {
+            url: qUrl,
+            author: typeof q.author === 'string' ? q.author : '',
+            handle: typeof q.handle === 'string' ? q.handle : '',
+            text: typeof q.text === 'string' ? q.text : '',
+            date: typeof q.date === 'string' ? q.date : '',
+            links: qLinks,
+            media: qMedia,
+          };
+        }
+      }
+
       normalized.push({
         url,
         author: typeof item.author === 'string' ? item.author : '',
@@ -61,6 +113,9 @@
         text: typeof item.text === 'string' ? item.text : '',
         date: typeof item.date === 'string' ? item.date : '',
         saved_at: typeof item.saved_at === 'string' ? item.saved_at : '',
+        links,
+        media,
+        quoted,
       });
     }
 
@@ -99,6 +154,58 @@
     if (!post || typeof post !== 'object' || !post.url) return false;
     if (isSaved(post.url)) return false;
 
+    const links = Array.isArray(post.links)
+      ? post.links
+          .filter((l) => typeof l === 'string')
+          .map((l) => l.trim())
+          .filter(Boolean)
+      : [];
+
+    const media = Array.isArray(post.media)
+      ? post.media
+          .filter((m) => m && typeof m === 'object')
+          .map((m) => ({
+            type: typeof m.type === 'string' ? m.type : '',
+            url: typeof m.url === 'string' ? m.url.trim() : '',
+          }))
+          .filter((m) => m.url)
+      : [];
+
+    let quoted = null;
+    if (post.quoted && typeof post.quoted === 'object') {
+      const q = post.quoted;
+
+      const qLinks = Array.isArray(q.links)
+        ? q.links
+            .filter((l) => typeof l === 'string')
+            .map((l) => l.trim())
+            .filter(Boolean)
+        : [];
+
+      const qMedia = Array.isArray(q.media)
+        ? q.media
+            .filter((m) => m && typeof m === 'object')
+            .map((m) => ({
+              type: typeof m.type === 'string' ? m.type : '',
+              url: typeof m.url === 'string' ? m.url.trim() : '',
+            }))
+            .filter((m) => m.url)
+        : [];
+
+      const qUrl = typeof q.url === 'string' ? q.url : '';
+      if (qUrl) {
+        quoted = {
+          url: qUrl,
+          author: typeof q.author === 'string' ? q.author : '',
+          handle: typeof q.handle === 'string' ? q.handle : '',
+          text: typeof q.text === 'string' ? q.text : '',
+          date: typeof q.date === 'string' ? q.date : '',
+          links: qLinks,
+          media: qMedia,
+        };
+      }
+    }
+
     const newPost = {
       url: post.url,
       author: post.author || '',
@@ -106,6 +213,9 @@
       text: post.text || '',
       date: post.date || '',
       saved_at: post.saved_at || nowIso(),
+      links,
+      media,
+      quoted,
     };
 
     savedPosts.unshift(newPost);
@@ -411,8 +521,40 @@
     return null;
   }
 
+  function findFirstWithinArticle(root, selector, containerArticle) {
+    const els = root.querySelectorAll ? root.querySelectorAll(selector) : [];
+
+    for (const el of els) {
+      if (containerArticle) {
+        const closestArticle = el.closest('article');
+        if (closestArticle && closestArticle !== containerArticle) continue;
+      }
+
+      return el;
+    }
+
+    return null;
+  }
+
+  function normalizeUrlForCompare(url) {
+    if (typeof url !== 'string') return '';
+
+    try {
+      const u = new URL(url);
+      u.hash = '';
+      u.search = '';
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }
+
   function extractAuthorAndHandle(tweetElement, url) {
-    const userNameEl = tweetElement.querySelector('[data-testid="User-Name"]');
+    const containerArticle =
+      tweetElement instanceof Element && tweetElement.matches('article') ? tweetElement : null;
+
+    const userNameEl = findFirstWithinArticle(tweetElement, '[data-testid="User-Name"]', containerArticle);
+
     let author = '';
     let handle = '';
 
@@ -437,19 +579,390 @@
     return { author, handle };
   }
 
-  function extractPostData(tweetElement) {
+  function findTweetTextElement(tweetElement, containerArticle) {
+    return findFirstWithinArticle(tweetElement, '[data-testid="tweetText"]', containerArticle);
+  }
+
+  function normalizeUiLabel(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function findShowMoreControl(root) {
+    if (!root || !root.querySelectorAll) return null;
+
+    const candidates = root.querySelectorAll(
+      'button, div[role="button"], span[role="button"], a[role="link"], a[href]'
+    );
+
+    for (const el of candidates) {
+      const label = normalizeUiLabel(el.innerText || el.textContent || '');
+      if (/^show more$/i.test(label)) return el;
+    }
+
+    return null;
+  }
+
+  function isWithinSameArticle(el, containerArticle) {
+    if (!containerArticle) return true;
+    if (!(el instanceof Element)) return false;
+
+    const closestArticle = el.closest('article');
+    return !closestArticle || closestArticle === containerArticle;
+  }
+
+  function resolveShowMoreClickable(control) {
+    if (!(control instanceof Element)) return null;
+
+    const button = control.closest('button');
+    if (button) return button;
+
+    const roleButton = control.closest('[role="button"]');
+    if (roleButton) return roleButton;
+
+    return control;
+  }
+
+  function findShowMoreNearTweetText(tweetElement, containerArticle, textEl) {
+    // X sometimes renders “Show more” as a sibling of the tweetText node.
+    let node = textEl;
+    for (let depth = 0; depth < 6 && node; depth++) {
+      const found = findShowMoreControl(node);
+      if (found && isWithinSameArticle(found, containerArticle)) return found;
+
+      if (containerArticle && node === containerArticle) break;
+      node = node.parentElement;
+    }
+
+    const root = containerArticle || tweetElement;
+    const found = findShowMoreControl(root);
+    if (found && isWithinSameArticle(found, containerArticle)) return found;
+
+    return null;
+  }
+
+  function safeClickControl(el) {
+    if (!(el instanceof Element)) return false;
+
+    try {
+      el.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+    } catch {
+      // ignore
+    }
+
+    try {
+      // If X uses <a> for “Show more”, prevent navigation but still allow the click handler.
+      if (el.tagName === 'A') {
+        el.addEventListener(
+          'click',
+          (e) => {
+            e.preventDefault();
+          },
+          { capture: true, once: true }
+        );
+      }
+
+      el.click();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function expandShowMoreIfPresent(tweetElement, containerArticle) {
+    const originalTextEl = findTweetTextElement(tweetElement, containerArticle);
+    if (!originalTextEl) return false;
+
+    let expanded = false;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const textEl = findTweetTextElement(tweetElement, containerArticle) || originalTextEl;
+      const before = normalizeUiLabel(textEl.innerText || '');
+
+      const showMoreControl = findShowMoreNearTweetText(tweetElement, containerArticle, textEl);
+      if (!showMoreControl) break;
+
+      const clickable = resolveShowMoreClickable(showMoreControl);
+      if (!clickable || !isWithinSameArticle(clickable, containerArticle)) break;
+
+      const clicked = safeClickControl(clickable);
+      if (!clicked) break;
+
+      const start = Date.now();
+      let changed = false;
+
+      while (Date.now() - start < 2000) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+
+        const currentTextEl = findTweetTextElement(tweetElement, containerArticle) || textEl;
+        const after = normalizeUiLabel(currentTextEl.innerText || '');
+
+        if (after && after.length > before.length + 5) {
+          changed = true;
+          break;
+        }
+
+        if (!findShowMoreNearTweetText(tweetElement, containerArticle, currentTextEl) && after && after !== before) {
+          changed = true;
+          break;
+        }
+      }
+
+      if (!changed) break;
+      expanded = true;
+    }
+
+    return expanded;
+  }
+
+  function extractTweetText(tweetElement, containerArticle) {
+    const textEl = findTweetTextElement(tweetElement, containerArticle);
+    if (!textEl) return '';
+
+    const showMoreControl = findShowMoreControl(textEl);
+    const showMoreLabel = showMoreControl
+      ? String(showMoreControl.innerText || showMoreControl.textContent || '').trim()
+      : '';
+
+    const visible = String(textEl.innerText || '').trim();
+
+    if (showMoreLabel && visible && visible.toLowerCase().endsWith(showMoreLabel.toLowerCase())) {
+      const withoutLabel = visible.slice(0, Math.max(0, visible.length - showMoreLabel.length)).trim();
+
+      const raw = String(textEl.textContent || '').trim();
+      if (raw && raw.length > withoutLabel.length) {
+        const rawWithoutLabel = raw.replace(showMoreLabel, '').trim();
+        if (rawWithoutLabel.length > withoutLabel.length) return rawWithoutLabel;
+      }
+
+      return withoutLabel;
+    }
+
+    return visible;
+  }
+
+  function extractLinks(tweetElement, containerArticle) {
+    const out = [];
+    const seen = new Set();
+
+    function add(raw) {
+      if (!raw || typeof raw !== 'string') return;
+
+      let abs = '';
+      try {
+        abs = new URL(raw, window.location.href).toString();
+      } catch {
+        return;
+      }
+
+      if (!abs) return;
+
+      try {
+        const u = new URL(abs);
+        const host = u.hostname.replace(/^www\./, '').toLowerCase();
+        if (host === 'x.com' || host === 'twitter.com' || host === 'mobile.twitter.com') return;
+      } catch {
+        // ignore
+      }
+
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      out.push(abs);
+    }
+
+    const textEl = findTweetTextElement(tweetElement, containerArticle);
+    const anchorsInText = textEl && textEl.querySelectorAll ? textEl.querySelectorAll('a[href]') : [];
+
+    for (const a of anchorsInText) {
+      const expanded = a.getAttribute('data-expanded-url');
+      const title = a.getAttribute('title');
+      const href = a.getAttribute('href');
+
+      if (expanded && /^https?:\/\//i.test(expanded)) add(expanded);
+      else if (title && /^https?:\/\//i.test(title)) add(title);
+      else add(href);
+    }
+
+    const tcoAnchors = tweetElement.querySelectorAll
+      ? tweetElement.querySelectorAll('a[href*="t.co/"]')
+      : [];
+
+    for (const a of tcoAnchors) {
+      if (containerArticle) {
+        const closestArticle = a.closest('article');
+        if (closestArticle && closestArticle !== containerArticle) continue;
+      }
+
+      add(a.getAttribute('href'));
+    }
+
+    return out;
+  }
+
+  function isLikelyImageMediaUrl(url) {
+    if (typeof url !== 'string') return false;
+
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      if (!host.endsWith('twimg.com')) return false;
+
+      const path = u.pathname.toLowerCase();
+      return (
+        path.includes('/media/') ||
+        path.includes('/ext_tw_video_thumb/') ||
+        path.includes('/tweet_video_thumb/') ||
+        path.includes('/amplify_video_thumb/')
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function withOriginalImageSize(url) {
+    if (typeof url !== 'string') return url;
+
+    try {
+      const u = new URL(url);
+      if (u.searchParams.has('name')) u.searchParams.set('name', 'orig');
+      return u.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  function extractMedia(tweetElement, containerArticle) {
+    const media = [];
+    const seen = new Set();
+
+    function add(type, raw) {
+      if (!raw || typeof raw !== 'string') return;
+
+      let abs = '';
+      try {
+        abs = new URL(raw, window.location.href).toString();
+      } catch {
+        return;
+      }
+
+      if (!abs) return;
+
+      let finalUrl = abs;
+
+      if (type === 'photo') {
+        if (!isLikelyImageMediaUrl(abs)) return;
+        finalUrl = withOriginalImageSize(abs);
+      } else if (type === 'video_poster' || type === 'thumb') {
+        if (!isLikelyImageMediaUrl(abs)) return;
+      } else if (type === 'video') {
+        if (!/^https?:\/\//i.test(abs)) return;
+        if (abs.startsWith('blob:')) return;
+      }
+
+      const key = `${type}|${finalUrl}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      media.push({ type, url: finalUrl });
+    }
+
+    const imgs = tweetElement.querySelectorAll ? tweetElement.querySelectorAll('img[src]') : [];
+    for (const img of imgs) {
+      if (containerArticle) {
+        const closestArticle = img.closest('article');
+        if (closestArticle && closestArticle !== containerArticle) continue;
+      }
+
+      const src = img.getAttribute('src');
+      if (!src) continue;
+
+      let abs = '';
+      try {
+        abs = new URL(src, window.location.href).toString();
+      } catch {
+        continue;
+      }
+
+      if (!isLikelyImageMediaUrl(abs)) continue;
+
+      let type = 'thumb';
+      try {
+        const path = new URL(abs).pathname.toLowerCase();
+        type = path.includes('/media/') ? 'photo' : 'thumb';
+      } catch {
+        // ignore
+      }
+
+      add(type, abs);
+    }
+
+    const videos = tweetElement.querySelectorAll ? tweetElement.querySelectorAll('video') : [];
+    for (const video of videos) {
+      if (containerArticle) {
+        const closestArticle = video.closest('article');
+        if (closestArticle && closestArticle !== containerArticle) continue;
+      }
+
+      const poster = video.getAttribute('poster');
+      if (poster) add('video_poster', poster);
+
+      const src = video.currentSrc || video.getAttribute('src') || '';
+      if (src) add('video', src);
+
+      const sources = video.querySelectorAll ? video.querySelectorAll('source[src]') : [];
+      for (const source of sources) {
+        const s = source.getAttribute('src');
+        if (s) add('video', s);
+      }
+    }
+
+    return media;
+  }
+
+  function findQuotedTweetArticle(tweetArticle, outerUrl) {
+    if (!tweetArticle || !tweetArticle.querySelectorAll) return null;
+
+    const outerNorm = normalizeUrlForCompare(outerUrl);
+    const articles = tweetArticle.querySelectorAll('article');
+
+    for (const article of articles) {
+      if (article === tweetArticle) continue;
+
+      const url = getTweetPermalink(article);
+      if (!url) continue;
+
+      if (normalizeUrlForCompare(url) === outerNorm) continue;
+      return article;
+    }
+
+    return null;
+  }
+
+  async function extractPostData(tweetElement, { includeQuoted = true } = {}) {
+    const containerArticle =
+      tweetElement instanceof Element && tweetElement.matches('article') ? tweetElement : null;
+
     const url = getTweetPermalink(tweetElement);
     if (!url) return null;
 
-    const timeEl = tweetElement.querySelector('time');
+    await expandShowMoreIfPresent(tweetElement, containerArticle);
+
+    const timeEl = findFirstWithinArticle(tweetElement, 'time', containerArticle);
     const date = timeEl ? timeEl.getAttribute('datetime') || '' : '';
 
-    const textEl = tweetElement.querySelector('[data-testid="tweetText"]');
-    const text = textEl ? String(textEl.innerText || '').trim() : '';
-
+    const text = extractTweetText(tweetElement, containerArticle);
     const { author, handle } = extractAuthorAndHandle(tweetElement, url);
 
-    return { url, author, handle, text, date };
+    const links = extractLinks(tweetElement, containerArticle);
+    const media = extractMedia(tweetElement, containerArticle);
+
+    let quoted = null;
+    if (includeQuoted && containerArticle) {
+      const quotedArticle = findQuotedTweetArticle(containerArticle, url);
+      if (quotedArticle) quoted = await extractPostData(quotedArticle, { includeQuoted: false });
+    }
+
+    return { url, author, handle, text, date, links, media, quoted };
   }
 
   function setSaveButtonState(button, { saved, url }) {
@@ -484,7 +997,7 @@
     }
   }
 
-  function onSaveButtonClick(event) {
+  async function onSaveButtonClick(event) {
     event.preventDefault();
     event.stopPropagation();
 
@@ -496,20 +1009,27 @@
       return;
     }
 
-    const post = extractPostData(tweetElement);
-    if (!post) {
-      toast('Could not extract post data (maybe not loaded yet).', { type: 'error' });
-      return;
-    }
+    const wasDisabled = button.disabled;
+    button.disabled = true;
 
-    button.dataset.url = post.url;
+    try {
+      const post = await extractPostData(tweetElement);
+      if (!post) {
+        toast('Could not extract post data (maybe not loaded yet).', { type: 'error' });
+        return;
+      }
 
-    if (isSaved(post.url)) {
-      const ok = removePost(post.url);
-      if (ok) toast('Removed.');
-    } else {
-      const ok = addPost(post);
-      if (ok) toast('Saved.');
+      button.dataset.url = post.url;
+
+      if (isSaved(post.url)) {
+        const ok = removePost(post.url);
+        if (ok) toast('Removed.');
+      } else {
+        const ok = addPost(post);
+        if (ok) toast('Saved.');
+      }
+    } finally {
+      button.disabled = wasDisabled;
     }
   }
 
