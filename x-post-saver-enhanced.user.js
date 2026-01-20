@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.3.2
+// @version      0.3.4
 // @description  Adds a "Save" button to posts on X.com. Saved posts are stored locally and can be exported as JSONL (NDJSON).
 // @match        https://x.com/*
 // @grant        none
@@ -512,7 +512,8 @@
       if (!href) continue;
 
       try {
-        return new URL(href, 'https://x.com').toString();
+        const abs = new URL(href, 'https://x.com').toString();
+        return canonicalizeStatusUrl(abs) || abs;
       } catch {
         // ignore
       }
@@ -520,6 +521,11 @@
 
     // Quoted/embedded posts sometimes don't render a <time> element.
     const statusLinks = tweetElement.querySelectorAll ? tweetElement.querySelectorAll('a[href*="/status/"]') : [];
+
+    const candidates = [];
+    const quoteContainerSelector =
+      '[data-testid="testCondensedMedia"], [data-testid="embeddedTweet"], div[aria-label="Embedded Tweet"], div[aria-label="Embedded Post"], div[aria-label="Embedded post"]';
+
     for (const link of statusLinks) {
       if (containerArticle) {
         const closestArticle = link.closest('article');
@@ -530,13 +536,22 @@
       if (!href) continue;
 
       try {
-        return new URL(href, 'https://x.com').toString();
+        const abs = new URL(href, 'https://x.com').toString();
+        candidates.push({ url: canonicalizeStatusUrl(abs) || abs, link });
       } catch {
         // ignore
       }
     }
 
-    return null;
+    if (candidates.length === 0) return null;
+
+    // When extracting the *main* tweet URL, avoid picking URLs from quoted tweet cards.
+    if (containerArticle) {
+      const preferred = candidates.find((c) => !c.link.closest(quoteContainerSelector));
+      if (preferred) return preferred.url;
+    }
+
+    return candidates[0].url;
   }
 
   function findFirstWithinArticle(root, selector, containerArticle) {
@@ -554,16 +569,46 @@
     return null;
   }
 
+  function canonicalizeStatusUrl(raw) {
+    if (typeof raw !== 'string') return null;
+
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+
+    let u;
+    try {
+      u = new URL(trimmed, 'https://x.com');
+    } catch {
+      return null;
+    }
+
+    const path = u.pathname || '';
+
+    const matchUser = path.match(/^\/([^/]+)\/status\/(\d+)/i);
+    if (matchUser) return `https://x.com/${matchUser[1]}/status/${matchUser[2]}`;
+
+    const matchWeb = path.match(/^\/i\/web\/status\/(\d+)/i);
+    if (matchWeb) return `https://x.com/i/web/status/${matchWeb[1]}`;
+
+    const matchStatus = path.match(/^\/status\/(\d+)/i);
+    if (matchStatus) return `https://x.com/status/${matchStatus[1]}`;
+
+    return null;
+  }
+
   function normalizeUrlForCompare(url) {
     if (typeof url !== 'string') return '';
 
+    const canonical = canonicalizeStatusUrl(url);
+    const normalized = canonical || url;
+
     try {
-      const u = new URL(url);
+      const u = new URL(normalized, 'https://x.com');
       u.hash = '';
       u.search = '';
       return u.toString();
     } catch {
-      return url;
+      return normalized;
     }
   }
 
@@ -957,6 +1002,56 @@
 
       const url = getTweetPermalink(root);
       if (url && normalizeUrlForCompare(url) !== outerNorm) return root;
+    }
+
+    // Quote cards can render without a nested <article> (e.g. data-testid="testCondensedMedia").
+    const condensedCards = tweetArticle.querySelectorAll('[data-testid="testCondensedMedia"]');
+    for (const card of condensedCards) {
+      const hasTweetText = card.querySelector ? !!card.querySelector('[data-testid="tweetText"]') : false;
+      const hasUser = card.querySelector ? !!card.querySelector('[data-testid="User-Name"]') : false;
+      if (!hasTweetText && !hasUser) continue;
+
+      const url = getTweetPermalink(card);
+      if (!url) continue;
+
+      if (normalizeUrlForCompare(url) === outerNorm) continue;
+      return card;
+    }
+
+    // Some quote cards render as a clickable div[role="link"] card (no nested <article> and no testCondensedMedia).
+    const outerTextEl = findFirstWithinArticle(tweetArticle, '[data-testid="tweetText"]', tweetArticle);
+    const outerUserNameEl = findFirstWithinArticle(tweetArticle, '[data-testid="User-Name"]', tweetArticle);
+
+    const seeds = tweetArticle.querySelectorAll('[data-testid="tweetText"], [data-testid="User-Name"]');
+    for (const seed of seeds) {
+      if (outerTextEl && seed === outerTextEl) continue;
+      if (outerUserNameEl && seed === outerUserNameEl) continue;
+
+      const card = seed.closest ? seed.closest('div[role="link"]') : null;
+      if (card && card !== tweetArticle) {
+        const url = getTweetPermalink(card);
+        if (url && normalizeUrlForCompare(url) !== outerNorm) return card;
+      }
+
+      let fallback = null;
+      let node = seed;
+
+      for (let depth = 0; depth < 12 && node && node !== tweetArticle; depth++) {
+        const url = getTweetPermalink(node);
+        if (url && normalizeUrlForCompare(url) !== outerNorm) {
+          fallback = node;
+
+          const hasUser = node.querySelector ? !!node.querySelector('[data-testid="User-Name"]') : false;
+          const hasText = node.querySelector ? !!node.querySelector('[data-testid="tweetText"]') : false;
+
+          if (hasUser && hasText) return node;
+          if (hasUser && node.matches && node.matches('article')) return node;
+        }
+
+        node = node.parentElement;
+      }
+
+      if (fallback) return fallback;
     }
 
     const articles = tweetArticle.querySelectorAll('article');
