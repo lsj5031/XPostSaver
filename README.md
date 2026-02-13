@@ -58,6 +58,30 @@ The floating panel (bottom-right corner) provides three options:
 - **Copy**: Copies all saved posts as JSONL to your clipboard
 - **Clear**: Removes all saved posts (with confirmation dialog)
 
+### Rust CLI Postprocessing
+
+This repository includes a standalone Rust CLI at `tools/xps-render-rs` for postprocessing exported JSONL data into per-post Markdown dossiers and CSV indexes.
+
+#### Run the CLI
+
+```bash
+cargo run --manifest-path tools/xps-render-rs/Cargo.toml -- \
+  --in ./x-saved-posts-2026-02-13.jsonl \
+  --out ./rendered
+```
+
+#### Options
+
+- `--strict`: fail-fast on the first malformed JSONL line
+- `--no-frontmatter`: omit YAML front matter from markdown outputs
+- `--prefix <value>`: fallback ID prefix for posts with missing IDs (default: `post`)
+
+#### Outputs
+
+- `rendered/posts/<NNNN>-<id-or-fallback>.md`: one Markdown file per normalized post
+- `rendered/index.csv`: index of rendered posts and metadata
+- `rendered/parse-errors.csv`: malformed input lines (only generated when parse errors exist in lenient mode)
+
 ## Data Format
 
 Saved posts are stored in JSONL (JSON Lines) format, with one JSON object per line:
