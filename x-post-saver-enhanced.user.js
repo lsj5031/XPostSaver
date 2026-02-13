@@ -670,6 +670,19 @@
     return findFirstWithinArticle(tweetElement, '[data-testid="tweetText"]', containerArticle);
   }
   __name(findTweetTextElement, "findTweetTextElement");
+  function findLongformTextElement(tweetElement, containerArticle) {
+    return findFirstWithinArticle(tweetElement, '[data-testid="longformRichTextComponent"]', containerArticle) || findFirstWithinArticle(tweetElement, '[data-testid="twitterArticleRichTextView"]', containerArticle);
+  }
+  __name(findLongformTextElement, "findLongformTextElement");
+  function findLongformTitleElement(tweetElement, containerArticle) {
+    return findFirstWithinArticle(tweetElement, '[data-testid="twitter-article-title"]', containerArticle);
+  }
+  __name(findLongformTitleElement, "findLongformTitleElement");
+  function extractTextFromElement(el) {
+    if (!el) return "";
+    return String(el.innerText || el.textContent || "").trim();
+  }
+  __name(extractTextFromElement, "extractTextFromElement");
   function findShowMoreControl(root) {
     if (!root || !root.querySelectorAll) return null;
     const candidates = root.querySelectorAll(
@@ -775,7 +788,19 @@
   __name(expandShowMoreIfPresent, "expandShowMoreIfPresent");
   function extractTweetText(tweetElement, containerArticle) {
     const textEl = findTweetTextElement(tweetElement, containerArticle);
-    if (!textEl) return "";
+    if (!textEl) {
+      const title = extractTextFromElement(findLongformTitleElement(tweetElement, containerArticle));
+      const longform = extractTextFromElement(findLongformTextElement(tweetElement, containerArticle));
+      if (title && longform) {
+        const normalizedTitle = normalizeUiLabel(title);
+        const normalizedLongform = normalizeUiLabel(longform);
+        if (normalizedTitle && normalizedLongform.startsWith(normalizedTitle)) return longform;
+        return `${title}
+
+${longform}`;
+      }
+      return longform || title;
+    }
     const showMoreControl = findShowMoreControl(textEl);
     const showMoreLabel = showMoreControl ? String(showMoreControl.innerText || showMoreControl.textContent || "").trim() : "";
     const visible = String(textEl.innerText || "").trim();
@@ -814,15 +839,23 @@
       out.push(abs);
     }
     __name(add, "add");
+    const contentRoots = [];
     const textEl = findTweetTextElement(tweetElement, containerArticle);
-    const anchorsInText = textEl && textEl.querySelectorAll ? textEl.querySelectorAll("a[href]") : [];
-    for (const a of anchorsInText) {
-      const expanded = a.getAttribute("data-expanded-url");
-      const title = a.getAttribute("title");
-      const href = a.getAttribute("href");
-      if (expanded && /^https?:\/\//i.test(expanded)) add(expanded);
-      else if (title && /^https?:\/\//i.test(title)) add(title);
-      else add(href);
+    if (textEl) contentRoots.push(textEl);
+    const longformEl = findLongformTextElement(tweetElement, containerArticle);
+    if (longformEl && !contentRoots.includes(longformEl)) contentRoots.push(longformEl);
+    const longformTitleEl = findLongformTitleElement(tweetElement, containerArticle);
+    if (longformTitleEl && !contentRoots.includes(longformTitleEl)) contentRoots.push(longformTitleEl);
+    for (const root of contentRoots) {
+      const anchors = root.querySelectorAll ? root.querySelectorAll("a[href]") : [];
+      for (const a of anchors) {
+        const expanded = a.getAttribute("data-expanded-url");
+        const title = a.getAttribute("title");
+        const href = a.getAttribute("href");
+        if (expanded && /^https?:\/\//i.test(expanded)) add(expanded);
+        else if (title && /^https?:\/\//i.test(title)) add(title);
+        else add(href);
+      }
     }
     const tcoAnchors = tweetElement.querySelectorAll ? tweetElement.querySelectorAll('a[href*="t.co/"]') : [];
     for (const a of tcoAnchors) {
