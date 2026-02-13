@@ -1,68 +1,126 @@
 # X Post Saver (Enhanced)
 
-A powerful userscript that adds a "Save" button to posts on X.com (formerly Twitter), enabling you to save posts locally and export them as JSONL (NDJSON) format.
+X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI that turns exported JSONL into Markdown dossiers and CSV indexes.
 
 ## Demo
 
-[Watch the demo video](demo.mp4) to see X Post Saver in action.
+[Watch the demo video](demo.mp4)
 
-## Features
+## Repository Components
 
-- **One-Click Saving**: Add a "Save" button to every post on X.com
-- **Local Storage**: All saved posts are stored locally in your browser using localStorage
-- **Rich Data Extraction**: Captures:
-  - Post URL, author, handle, text, and date
-  - External links shared in the post
-  - Media (photos and videos) with original-quality image URLs
-  - Quoted tweets (with full extraction of the quoted post's data)
-- **Export Options**:
-  - Download as JSONL file (timestamped filename)
-  - Copy to clipboard for easy pasting
-- **Persistent Storage**: Uses localStorage with quota-aware error handling
-- **Smart UI**: 
-  - Floating panel at bottom-right with Export, Copy, and Clear buttons
-  - Save button state indicators (Save/Saved)
-  - Toast notifications for user feedback
-  - "Show more" expansion to capture full tweet text
+- `x-post-saver-enhanced.user.js`: production userscript you install in Tampermonkey/Violentmonkey/Greasemonkey.
+- `src/`: userscript source code.
+- `tools/xps-render-rs`: standalone Rust CLI (`xps-render`) for postprocessing exported JSONL.
+
+## Userscript Features
+
+### Save and Manage Posts on X
+
+- Injects a `Save`/`Saved` button into each post action bar.
+- Supports save and unsave in place.
+- Uses post-key dedupe (post `id` first, URL normalization fallback) to prevent duplicates.
+- Scans dynamic timeline updates with `MutationObserver` and incremental rescans.
+
+### Rich Extraction
+
+For each saved post, extracts:
+
+- `id`, `url`, `author`, `handle`, `text`, `date`, `saved_at`
+- External links (`links`) with X/Twitter domains excluded
+- Media (`media`) including:
+  - photos (normalized to original-size image URLs when possible)
+  - video poster/thumb URLs
+  - direct video source URLs (excluding blob URLs)
+- Quoted post (`quoted`) as one nested level with its own fields (`url/author/handle/text/date/links/media`)
+
+Extraction behavior details:
+
+- Expands `Show more` when present to capture full text.
+- Supports longform article layouts (`twitterArticleRichTextView` / longform components).
+- Canonicalizes status URLs (`/user/status/:id`, `/i/web/status/:id`, `/status/:id`) for stable comparison.
+
+### Storage and Sync
+
+- Primary storage key: `xSavedPosts`.
+- Uses userscript storage APIs (`GM_getValue`/`GM_setValue`) when available.
+- Falls back to `localStorage` if GM APIs are unavailable.
+- Migrates legacy `localStorage` data to GM storage when possible.
+- Cross-tab refresh signal key: `xpsSync`.
+- Soft limit/warnings:
+  - warning toast at `1800` saved posts
+  - save blocked at `2000` saved posts
+
+### Export and UI
+
+- Floating panel with:
+  - `Export (N)`: downloads `x-saved-posts-YYYY-MM-DD.jsonl`
+  - `Copy`: copies JSONL to clipboard
+  - `Clear`: clears all saved posts after confirmation
+- Toast notifications for success/error states.
+
+## Rust CLI (`xps-render`) Features
+
+`xps-render` ingests exported JSONL and renders per-post Markdown plus indexes.
+
+### Input Processing
+
+- Reads JSONL line-by-line.
+- Modes:
+  - default (lenient): skip malformed lines and record them in `parse-errors.csv`
+  - `--strict`: fail on first malformed line
+- Normalizes/sanitizes fields similarly to userscript logic:
+  - trims URLs
+  - normalizes links/media arrays
+  - resolves `id` from URL when missing
+  - removes invalid objects
+- Deduplicates using `id` first, then canonicalized URL key.
+
+### Output
+
+Given `--out <dir>`, writes:
+
+- `<dir>/posts/<NNNN>-<id-or-fallback>.md`
+- `<dir>/index.csv`
+- `<dir>/parse-errors.csv` (only when parse errors exist)
+
+Rendering details:
+
+- Preserves input/save order.
+- Markdown includes sections:
+  - `Text`
+  - `Links`
+  - `Media`
+  - `Quoted Post` (when present)
+  - `Source URL`
+- YAML front matter is included by default and can be disabled with `--no-frontmatter`.
+- If `<dir>/posts` already exists, it is replaced for a clean render.
 
 ## Installation
 
-### Prerequisites
+### Userscript
 
 1. Install a userscript manager:
    - [Tampermonkey](https://www.tampermonkey.net/) (recommended)
-   - [Greasemonkey](https://www.greasespot.net/)
    - [Violentmonkey](https://violentmonkey.github.io/)
+   - [Greasemonkey](https://www.greasespot.net/)
+2. Install `x-post-saver-enhanced.user.js` in your userscript manager.
 
-### Install the Script
+### Rust CLI
 
-1. Download `x-post-saver-enhanced.user.js`
-2. Open your userscript manager
-3. Create a new script and paste the contents, or
-4. Simply open the `.user.js` file in your browser and the userscript manager will prompt to install it
+Prerequisite: Rust toolchain with `cargo` installed.
 
 ## Usage
 
-### Saving Posts
+### Userscript
 
-1. Navigate to any post on X.com
-2. Click the "Save" button in the post's action bar (next to Reply, Retweet, etc.)
-3. The button will change to "Saved" and a toast notification will confirm
-4. To unsave, click the "Saved" button again
+1. Open X.com.
+2. Click `Save` on posts you want to keep.
+3. Use floating panel:
+   - `Export` to JSONL
+   - `Copy` to clipboard
+   - `Clear` to remove all saves
 
-### Exporting Saved Posts
-
-The floating panel (bottom-right corner) provides three options:
-
-- **Export (N)**: Downloads all saved posts as a JSONL file named `x-saved-posts-YYYY-MM-DD.jsonl`
-- **Copy**: Copies all saved posts as JSONL to your clipboard
-- **Clear**: Removes all saved posts (with confirmation dialog)
-
-### Rust CLI Postprocessing
-
-This repository includes a standalone Rust CLI at `tools/xps-render-rs` for postprocessing exported JSONL data into per-post Markdown dossiers and CSV indexes.
-
-#### Run the CLI
+### Rust CLI
 
 ```bash
 cargo run --manifest-path tools/xps-render-rs/Cargo.toml -- \
@@ -70,79 +128,64 @@ cargo run --manifest-path tools/xps-render-rs/Cargo.toml -- \
   --out ./rendered
 ```
 
-#### Options
+Options:
 
-- `--strict`: fail-fast on the first malformed JSONL line
-- `--no-frontmatter`: omit YAML front matter from markdown outputs
-- `--prefix <value>`: fallback ID prefix for posts with missing IDs (default: `post`)
+- `--strict`: fail-fast on malformed JSONL
+- `--no-frontmatter`: omit YAML front matter in markdown files
+- `--prefix <value>`: fallback filename prefix when `id` is missing (default: `post`)
 
-#### Outputs
+## JSONL Format
 
-- `rendered/posts/<NNNN>-<id-or-fallback>.md`: one Markdown file per normalized post
-- `rendered/index.csv`: index of rendered posts and metadata
-- `rendered/parse-errors.csv`: malformed input lines (only generated when parse errors exist in lenient mode)
+Each line is one JSON object.
 
-## Data Format
-
-Saved posts are stored in JSONL (JSON Lines) format, with one JSON object per line:
+Example:
 
 ```json
-{"url":"https://x.com/user/status/123456789","author":"User Name","handle":"@username","text":"Post text here","date":"2026-01-20T12:00:00.000Z","saved_at":"2026-01-20T12:30:00.000Z","links":["https://example.com"],"media":[{"type":"photo","url":"https://pbs.twimg.com/media/..."}],"quoted":{...}}
+{"id":"123456789","url":"https://x.com/user/status/123456789","author":"User Name","handle":"@username","text":"Post text","date":"2026-01-20T12:00:00.000Z","saved_at":"2026-01-20T12:30:00.000Z","links":["https://example.com"],"media":[{"type":"photo","url":"https://pbs.twimg.com/media/..."}],"quoted":null}
 ```
 
-### Fields
+Top-level fields:
 
-- `url`: Canonical post URL
-- `author`: Display name of the author
-- `handle`: Username (including @)
-- `text`: Full post text (with "Show more" expanded)
-- `date`: ISO 8601 timestamp from the post
-- `saved_at`: ISO 8601 timestamp when you saved it
-- `links`: Array of external URLs (excludes X.com/Twitter links)
-- `media`: Array of media objects with `type` (photo/video/video_poster/thumb) and `url`
-- `quoted`: Object containing full data of a quoted tweet (if present)
+- `id`: status ID (string; may be empty if not derivable)
+- `url`: canonical post URL
+- `author`: display name
+- `handle`: username with `@`
+- `text`: extracted post text
+- `date`: post datetime from X
+- `saved_at`: timestamp when saved locally
+- `links`: external links array
+- `media`: array of `{ type, url }`
+- `quoted`: nested quoted post object or `null`
 
-## Technical Details
+## Development
 
-### URL Canonicalization
+### Userscript
 
-The script normalizes various X.com URL formats:
-- `https://x.com/username/status/123`
-- `https://x.com/i/web/status/123`
-- `https://x.com/status/123`
-- URLs with query parameters, fragments, etc.
+- Build bundled userscript:
 
-All are converted to the canonical format: `https://x.com/username/status/123`
+```bash
+npm run build
+```
 
-### Media Quality
+- Run JS tests:
 
-Image URLs are automatically enhanced to fetch original quality:
-- Changes `?name=medium` to `?name=orig`
-- Ensures highest resolution for photos and thumbnails
+```bash
+npm test
+```
 
-### Browser Compatibility
+### Rust CLI
 
-- Works on modern browsers with userscript manager support
-- Requires localStorage access
-- Uses ES6+ features (async/await, arrow functions, etc.)
+- Run Rust tests:
 
-### Storage
+```bash
+cargo test --manifest-path tools/xps-render-rs/Cargo.toml
+```
 
-- Data is stored in `localStorage` under key `xSavedPosts`
-- No external servers or API calls
-- All data remains on your device
-- Graceful handling of quota exceeded errors
+## Privacy
 
-## Version History
-
-- **0.3.4**: Enhanced quote tweet detection, URL canonicalization
-- **0.3.x**: Added support for links, media, and quoted tweet extraction
-- Earlier versions: Initial functionality
+- No external API calls are required for saving/exporting posts.
+- Data is stored locally in browser storage.
 
 ## License
 
-This userscript is provided as-is for personal use.
-
-## Contributing
-
-Feel free to submit issues, fork the repository, and create pull requests for any improvements.
+Provided as-is for personal use.
