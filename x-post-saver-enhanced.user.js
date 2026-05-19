@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.3.5
+// @version      0.3.6
 // @description  Adds a "Save" button to posts on X.com. Saved posts are stored locally and can be exported as JSONL (NDJSON).
 // @match        https://x.com/*
 // @grant        GM_getValue
@@ -409,6 +409,57 @@
     }
   }
   __name(copyJsonlToClipboard, "copyJsonlToClipboard");
+  function buildUrlList() {
+    return savedPosts.map((p) => p.url).join("\n") + (savedPosts.length ? "\n" : "");
+  }
+  __name(buildUrlList, "buildUrlList");
+  function downloadUrlList() {
+    if (savedPosts.length === 0) {
+      toast("No saved posts to export.");
+      return;
+    }
+    const filename = `x-saved-posts-${nowIso().slice(0, 10)}.txt`;
+    const blob = new Blob([buildUrlList()], { type: "text/plain;charset=utf-8" });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1e3);
+  }
+  __name(downloadUrlList, "downloadUrlList");
+  async function copyUrlListToClipboard() {
+    if (savedPosts.length === 0) {
+      toast("No saved posts to copy.");
+      return;
+    }
+    const text = buildUrlList();
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        toast("Copied URLs to clipboard.");
+        return;
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.top = "-1000px";
+      textarea.style.left = "-1000px";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const ok = document.execCommand("copy");
+      textarea.remove();
+      if (!ok) throw new Error("Copy failed");
+      toast("Copied URLs to clipboard.");
+    } catch {
+      toast("Copy failed (permission blocked?).", { type: "error" });
+    }
+  }
+  __name(copyUrlListToClipboard, "copyUrlListToClipboard");
   function clearAllPosts() {
     if (savedPosts.length === 0) {
       toast("Nothing to clear.");
@@ -583,8 +634,20 @@
     clearBtn.type = "button";
     clearBtn.textContent = "Clear";
     clearBtn.addEventListener("click", clearAllPosts);
+    const exportUrlsBtn = document.createElement("button");
+    exportUrlsBtn.type = "button";
+    exportUrlsBtn.textContent = "Export URLs";
+    exportUrlsBtn.addEventListener("click", downloadUrlList);
+    const copyUrlsBtn = document.createElement("button");
+    copyUrlsBtn.type = "button";
+    copyUrlsBtn.textContent = "Copy URLs";
+    copyUrlsBtn.addEventListener("click", () => {
+      void copyUrlListToClipboard();
+    });
     panel.appendChild(exportBtn);
     panel.appendChild(copyBtn);
+    panel.appendChild(exportUrlsBtn);
+    panel.appendChild(copyUrlsBtn);
     panel.appendChild(clearBtn);
     (document.documentElement || document.body).appendChild(panel);
     updatePanelCount();
