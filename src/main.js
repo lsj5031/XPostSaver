@@ -1114,20 +1114,47 @@ async function onSaveButtonClick(event) {
   }
 }
 
+const EMBED_CARD_SELECTORS = [
+  '[data-testid="testCondensedMedia"]',
+  '[data-testid="embeddedTweet"]',
+  '[data-testid="card.wrapper"]',
+  'div[aria-label="Embedded Tweet"]',
+  'div[aria-label="Embedded Post"]',
+  'div[aria-label="Embedded post"]',
+];
+
+function isInsideEmbedOrCard(el) {
+  if (!(el instanceof Element)) return false;
+  for (const sel of EMBED_CARD_SELECTORS) {
+    if (el.closest(sel)) return true;
+  }
+  return false;
+}
+
 function findActionBar(tweetElement) {
   const reply = tweetElement.querySelector('[data-testid="reply"]');
   const groupFromReply = reply ? reply.closest('div[role="group"]') : null;
-  if (groupFromReply) return groupFromReply;
+  if (groupFromReply && !isInsideEmbedOrCard(groupFromReply)) return groupFromReply;
 
   const groups = tweetElement.querySelectorAll('div[role="group"]');
+  let bestGroup = null;
+  let bestScore = 0;
+
   for (const group of groups) {
+    if (isInsideEmbedOrCard(group)) continue;
+
     const hasReply = group.querySelector('[data-testid="reply"]');
     const hasRetweet = group.querySelector('[data-testid="retweet"]');
     const hasLike = group.querySelector('[data-testid="like"], [data-testid="unlike"]');
-    if (hasReply || hasRetweet || hasLike) return group;
+
+    const score = (hasReply ? 1 : 0) + (hasRetweet ? 1 : 0) + (hasLike ? 1 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestGroup = group;
+    }
   }
 
-  return null;
+  return bestGroup;
 }
 
 function ensureSaveButton(tweetElement) {
