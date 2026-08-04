@@ -7,8 +7,25 @@ export function nowIso() {
 /** @param {string} url */
 export function tweetIdFromUrl(url) {
   if (typeof url !== 'string') return null;
-  const match = url.match(/\/status\/(\d+)/i);
+
+  let parsed;
+  try {
+    parsed = new URL(url, 'https://x.com');
+  } catch {
+    return null;
+  }
+
+  if (!isSupportedXHost(parsed.hostname)) return null;
+
+  const match = parsed.pathname.match(/\/status\/(\d+)/i);
   return match ? match[1] : null;
+}
+
+/** @param {string} host */
+export function isSupportedXHost(host) {
+  if (typeof host !== 'string') return false;
+  const normalized = host.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+  return normalized === 'x.com' || normalized === 'twitter.com' || normalized === 'mobile.twitter.com';
 }
 
 /** @param {unknown[]} links */
@@ -89,6 +106,8 @@ export function canonicalizeStatusUrl(raw) {
     return null;
   }
 
+  if (!isSupportedXHost(u.hostname)) return null;
+
   const path = u.pathname || '';
   const matchUser = path.match(/^\/([^/]+)\/status\/(\d+)/i);
   if (matchUser) return `https://x.com/${matchUser[1]}/status/${matchUser[2]}`;
@@ -162,8 +181,9 @@ export function isLikelyImageMediaUrl(url) {
   if (typeof url !== 'string') return false;
   try {
     const u = new URL(url);
+    if (u.protocol !== 'https:') return false;
     const host = u.hostname.toLowerCase();
-    if (!host.endsWith('twimg.com')) return false;
+    if (host !== 'twimg.com' && !host.endsWith('.twimg.com')) return false;
     const path = u.pathname.toLowerCase();
     return (
       path.includes('/media/') ||

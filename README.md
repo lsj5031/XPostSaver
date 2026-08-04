@@ -161,10 +161,22 @@ Top-level fields:
 
 ### Userscript
 
+- Install JavaScript development dependencies:
+
+```bash
+npm ci
+```
+
 - Build bundled userscript:
 
 ```bash
 npm run build
+```
+
+- Verify the checked-in bundle matches the source:
+
+```bash
+npm run build:check
 ```
 
 - Run JS tests:

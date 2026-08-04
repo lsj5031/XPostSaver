@@ -18,12 +18,13 @@ import {
   withOriginalImageSize,
   normalizeUiLabel,
 } from './utils.js';
+import { tryCommitSavedPosts } from './storage.js';
+import { findActionBar, getMutationArticle, removeStaleSaveButtons } from './dom.js';
 
 const STORAGE_KEY = 'xSavedPosts';
 const STORAGE_SYNC_KEY = 'xpsSync';
 const STORAGE_SOFT_LIMIT = 2000;
 const STORAGE_WARN_THRESHOLD = 1800;
-const ARTICLE_PROCESSED_ATTR = 'data-xps-processed';
 
 const UI = {
   styleId: 'xps-style',
@@ -116,8 +117,11 @@ function loadSavedPosts() {
   const raw = storageGet(STORAGE_KEY);
   if (!raw) return [];
 
+  if (Array.isArray(raw)) return normalizeSavedPosts(raw);
+  if (typeof raw !== 'string') return [];
+
   try {
-    return normalizeSavedPosts(JSON.parse(/** @type {string} */ (raw)));
+    return normalizeSavedPosts(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -131,6 +135,15 @@ function persistSavedPosts(posts) {
   }
 
   broadcastStorageUpdate();
+  return true;
+}
+
+function commitSavedPosts(nextPosts) {
+  const result = tryCommitSavedPosts(savedPosts, nextPosts, persistSavedPosts);
+  if (!result.committed) return false;
+
+  savedPosts = /** @type {typeof savedPosts} */ (result.posts);
+  rebuildIndex();
   return true;
 }
 
@@ -176,15 +189,7 @@ function addPost(post) {
   const newPost = sanitizePost(post, { defaultSavedAt: nowIso() });
   if (!newPost) return false;
 
-  savedPosts.unshift(newPost);
-  const key = getPostKey(newPost);
-  if (key) savedKeySet.add(key);
-
-  if (!persistSavedPosts(savedPosts)) {
-    savedPosts = savedPosts.filter((p) => p.url !== newPost.url);
-    rebuildIndex();
-    return false;
-  }
+  if (!commitSavedPosts([newPost, ...savedPosts])) return false;
 
   updatePanelCount();
   updateButtonsForUrl(newPost.url);
@@ -199,10 +204,8 @@ function removePost(url) {
   const key = getPostKeyFromUrl(url);
   if (!key) return false;
 
-  savedPosts = savedPosts.filter((p) => getPostKey(p) !== key);
-  rebuildIndex();
-
-  if (!persistSavedPosts(savedPosts)) return false;
+  const nextPosts = savedPosts.filter((p) => getPostKey(p) !== key);
+  if (!commitSavedPosts(nextPosts)) return false;
 
   updatePanelCount();
   updateButtonsForUrl(url);
@@ -339,9 +342,7 @@ function clearAllPosts() {
 
   if (!confirm(`Clear ${savedPosts.length} saved posts?`)) return;
 
-  savedPosts = [];
-  rebuildIndex();
-  persistSavedPosts(savedPosts);
+  if (!commitSavedPosts([])) return;
 
   updatePanelCount();
   updateAllButtons();
@@ -559,7 +560,8 @@ function getTweetPermalink(tweetElement) {
 
     try {
       const abs = new URL(href, 'https://x.com').toString();
-      return canonicalizeStatusUrl(abs) || abs;
+      const canonical = canonicalizeStatusUrl(abs);
+      if (canonical) return canonical;
     } catch {
       // ignore
     }
@@ -583,7 +585,8 @@ function getTweetPermalink(tweetElement) {
 
     try {
       const abs = new URL(href, 'https://x.com').toString();
-      candidates.push({ url: canonicalizeStatusUrl(abs) || abs, link });
+      const canonical = canonicalizeStatusUrl(abs);
+      if (canonical) candidates.push({ url: canonical, link });
     } catch {
       // ignore
     }
@@ -598,12 +601,6 @@ function getTweetPermalink(tweetElement) {
   }
 
   return candidates[0].url;
-}
-
-function markArticleProcessed(article) {
-  if (!(article instanceof Element)) return;
-  if (!article.matches('article')) return;
-  article.setAttribute(ARTICLE_PROCESSED_ATTR, '1');
 }
 
 function findFirstWithinArticle(root, selector, containerArticle) {
@@ -1188,67 +1185,15 @@ async function onSaveButtonClick(event) {
   }
 }
 
-const EMBED_CARD_SELECTORS = [
-  '[data-testid="testCondensedMedia"]',
-  '[data-testid="embeddedTweet"]',
-  '[data-testid="card.wrapper"]',
-  'div[aria-label="Embedded Tweet"]',
-  'div[aria-label="Embedded Post"]',
-  'div[aria-label="Embedded post"]',
-];
-
-function isInsideEmbedOrCard(el) {
-  if (!(el instanceof Element)) return false;
-  for (const sel of EMBED_CARD_SELECTORS) {
-    if (el.closest(sel)) return true;
-  }
-  return false;
-}
-
-function findActionBar(tweetElement) {
-  const reply = tweetElement.querySelector('[data-testid="reply"]');
-  const groupFromReply = reply ? reply.closest('div[role="group"]') : null;
-  if (groupFromReply && !isInsideEmbedOrCard(groupFromReply)) return groupFromReply;
-
-  const groups = tweetElement.querySelectorAll('div[role="group"]');
-  let bestGroup = null;
-  let bestScore = 0;
-
-  for (const group of groups) {
-    if (isInsideEmbedOrCard(group)) continue;
-
-    const hasReply = group.querySelector('[data-testid="reply"]');
-    const hasRetweet = group.querySelector('[data-testid="retweet"]');
-    const hasLike = group.querySelector('[data-testid="like"], [data-testid="unlike"]');
-
-    const score = (hasReply ? 1 : 0) + (hasRetweet ? 1 : 0) + (hasLike ? 1 : 0);
-    if (score > bestScore) {
-      bestScore = score;
-      bestGroup = group;
-    }
-  }
-
-  return bestGroup;
-}
-
 function ensureSaveButton(tweetElement) {
   const url = getTweetPermalink(tweetElement);
-  if (!url) {
-    if (tweetElement instanceof Element && tweetElement.matches('article')) {
-      markArticleProcessed(tweetElement);
-    }
-    return;
-  }
+  if (!url) return;
 
   const actionBar = findActionBar(tweetElement);
-  if (!actionBar) {
-    if (tweetElement instanceof Element && tweetElement.matches('article')) {
-      markArticleProcessed(tweetElement);
-    }
-    return;
-  }
+  if (!actionBar) return;
 
-  let button = actionBar.querySelector('button.xps-save-btn');
+  /** @type {HTMLButtonElement|null} */
+  let button = /** @type {HTMLButtonElement|null} */ (actionBar.querySelector('button.xps-save-btn'));
   if (!button) {
     button = document.createElement('button');
     button.type = 'button';
@@ -1264,23 +1209,21 @@ function ensureSaveButton(tweetElement) {
   }
 
   setSaveButtonState(button, { saved: isSaved(url), url });
-
-  if (tweetElement instanceof Element && tweetElement.matches('article')) {
-    markArticleProcessed(tweetElement);
-  }
+  removeStaleSaveButtons(tweetElement, actionBar);
 }
 
 function scanForTweets(root) {
   if (!root) return;
 
   if (root instanceof Element && root.matches('article')) {
-    ensureSaveButton(root);
+    if (!root.parentElement?.closest('article')) ensureSaveButton(root);
     return;
   }
 
-  const selector = `article:not([${ARTICLE_PROCESSED_ATTR}])`;
+  const selector = 'article';
   const articles = root.querySelectorAll ? root.querySelectorAll(selector) : [];
   for (const article of articles) {
+    if (article.parentElement?.closest('article')) continue;
     ensureSaveButton(article);
   }
 }
@@ -1322,13 +1265,15 @@ function init() {
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      if (!mutation.addedNodes || mutation.addedNodes.length === 0) continue;
+      const targetArticle = getMutationArticle(mutation.target);
+      if (targetArticle) scheduleScan(targetArticle);
 
       mutation.addedNodes.forEach((node) => {
         if (!(node instanceof Element)) return;
 
-        if (node.matches('article')) {
-          scheduleScan(node);
+        const owningArticle = getMutationArticle(node);
+        if (owningArticle) {
+          scheduleScan(owningArticle);
           return;
         }
 

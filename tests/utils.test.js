@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   tweetIdFromUrl,
+  isSupportedXHost,
   sanitizeLinks,
   sanitizeMedia,
   sanitizeQuotedPost,
@@ -41,6 +42,23 @@ describe('tweetIdFromUrl', () => {
 
   it('returns null for empty string', () => {
     expect(tweetIdFromUrl('')).toBeNull();
+  });
+
+  it('rejects status-shaped URLs on other domains', () => {
+    expect(tweetIdFromUrl('https://example.com/status/123')).toBeNull();
+  });
+});
+
+describe('isSupportedXHost', () => {
+  it('accepts supported X hostnames', () => {
+    expect(isSupportedXHost('x.com')).toBe(true);
+    expect(isSupportedXHost('www.twitter.com')).toBe(true);
+    expect(isSupportedXHost('mobile.twitter.com')).toBe(true);
+  });
+
+  it('rejects lookalike hostnames', () => {
+    expect(isSupportedXHost('x.com.example.com')).toBe(false);
+    expect(isSupportedXHost('not-twimg.com')).toBe(false);
   });
 });
 
@@ -265,6 +283,10 @@ describe('canonicalizeStatusUrl', () => {
   it('returns null for URL without status', () => {
     expect(canonicalizeStatusUrl('https://x.com/user')).toBeNull();
   });
+
+  it('returns null for status-shaped URL on another domain', () => {
+    expect(canonicalizeStatusUrl('https://example.com/user/status/123')).toBeNull();
+  });
 });
 
 describe('normalizeUrlForCompare', () => {
@@ -416,6 +438,14 @@ describe('isLikelyImageMediaUrl', () => {
     expect(isLikelyImageMediaUrl(null)).toBe(false);
     expect(isLikelyImageMediaUrl(42)).toBe(false);
     expect(isLikelyImageMediaUrl(undefined)).toBe(false);
+  });
+
+  it('rejects lookalike twimg domains', () => {
+    expect(isLikelyImageMediaUrl('https://evil-twimg.com/media/a.jpg')).toBe(false);
+  });
+
+  it('requires https media URLs', () => {
+    expect(isLikelyImageMediaUrl('http://pbs.twimg.com/media/a.jpg')).toBe(false);
   });
 });
 

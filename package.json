@@ -1,10 +1,11 @@
 {
   "name": "xpostsaver",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
+    "build:check": "node scripts/build.js --check",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -12,10 +13,11 @@
     "check": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.1",
     "eslint": "^9.0.0",
     "globals": "^15.0.0",
+    "jsdom": "^29.1.1",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.10"
   }
 }

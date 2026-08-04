@@ -249,8 +249,14 @@ pub fn sanitize_post(value: &Value, default_saved_at: &str) -> Option<Post> {
 }
 
 pub fn tweet_id_from_url(url: &str) -> Option<String> {
+    let parsed = parse_url_with_base(url)?;
+    let host = parsed.host_str()?;
+    if !is_supported_x_host(host) {
+        return None;
+    }
+
     TWEET_ID_RE
-        .captures(url)
+        .captures(parsed.path())
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
 }
 
@@ -261,6 +267,11 @@ pub fn canonicalize_status_url(raw: &str) -> Option<String> {
     }
 
     let parsed = parse_url_with_base(trimmed)?;
+    let host = parsed.host_str()?;
+    if !is_supported_x_host(host) {
+        return None;
+    }
+
     let path = parsed.path();
 
     if let Some(caps) = USER_STATUS_PATH_RE.captures(path) {
@@ -517,6 +528,12 @@ fn parse_url_with_base(raw: &str) -> Option<Url> {
     base.join(raw).ok()
 }
 
+fn is_supported_x_host(host: &str) -> bool {
+    let normalized = host.trim_end_matches('.').to_ascii_lowercase();
+    let normalized = normalized.strip_prefix("www.").unwrap_or(&normalized);
+    matches!(normalized, "x.com" | "twitter.com" | "mobile.twitter.com")
+}
+
 fn string_field(obj: &serde_json::Map<String, Value>, key: &str) -> String {
     match obj.get(key) {
         Some(Value::String(value)) => value.clone(),
@@ -746,5 +763,18 @@ mod tests {
 
         let strict = parse_jsonl(input, true);
         assert!(strict.is_err());
+    }
+
+    #[test]
+    fn status_urls_require_an_x_host() {
+        assert_eq!(
+            tweet_id_from_url("https://x.com/a/status/1"),
+            Some("1".to_string())
+        );
+        assert_eq!(tweet_id_from_url("https://example.com/a/status/1"), None);
+        assert_eq!(
+            canonicalize_status_url("https://example.com/a/status/1"),
+            None
+        );
     }
 }

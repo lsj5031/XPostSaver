@@ -21,10 +21,23 @@
   __name(nowIso, "nowIso");
   function tweetIdFromUrl(url) {
     if (typeof url !== "string") return null;
-    const match = url.match(/\/status\/(\d+)/i);
+    let parsed;
+    try {
+      parsed = new URL(url, "https://x.com");
+    } catch {
+      return null;
+    }
+    if (!isSupportedXHost(parsed.hostname)) return null;
+    const match = parsed.pathname.match(/\/status\/(\d+)/i);
     return match ? match[1] : null;
   }
   __name(tweetIdFromUrl, "tweetIdFromUrl");
+  function isSupportedXHost(host) {
+    if (typeof host !== "string") return false;
+    const normalized = host.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+    return normalized === "x.com" || normalized === "twitter.com" || normalized === "mobile.twitter.com";
+  }
+  __name(isSupportedXHost, "isSupportedXHost");
   function sanitizeLinks(links) {
     if (!Array.isArray(links)) return [];
     return links.filter((l) => typeof l === "string").map((l) => (
@@ -95,6 +108,7 @@
     } catch {
       return null;
     }
+    if (!isSupportedXHost(u.hostname)) return null;
     const path = u.pathname || "";
     const matchUser = path.match(/^\/([^/]+)\/status\/(\d+)/i);
     if (matchUser) return `https://x.com/${matchUser[1]}/status/${matchUser[2]}`;
@@ -153,8 +167,9 @@
     if (typeof url !== "string") return false;
     try {
       const u = new URL(url);
+      if (u.protocol !== "https:") return false;
       const host = u.hostname.toLowerCase();
-      if (!host.endsWith("twimg.com")) return false;
+      if (host !== "twimg.com" && !host.endsWith(".twimg.com")) return false;
       const path = u.pathname.toLowerCase();
       return path.includes("/media/") || path.includes("/ext_tw_video_thumb/") || path.includes("/tweet_video_thumb/") || path.includes("/amplify_video_thumb/");
     } catch {
@@ -178,12 +193,80 @@
   }
   __name(normalizeUiLabel, "normalizeUiLabel");
 
+  // src/storage.js
+  function tryCommitSavedPosts(currentPosts, nextPosts, persist) {
+    try {
+      if (!persist(nextPosts)) return { committed: false, posts: currentPosts };
+    } catch {
+      return { committed: false, posts: currentPosts };
+    }
+    return { committed: true, posts: nextPosts };
+  }
+  __name(tryCommitSavedPosts, "tryCommitSavedPosts");
+
+  // src/dom.js
+  var EMBEDDED_TWEET_SELECTORS = [
+    '[data-testid="testCondensedMedia"]',
+    '[data-testid="embeddedTweet"]',
+    'div[aria-label="Embedded Tweet"]',
+    'div[aria-label="Embedded Post"]',
+    'div[aria-label="Embedded post"]'
+  ];
+  var GENERIC_CARD_SELECTOR = '[data-testid="card.wrapper"]';
+  function isInsideEmbeddedTweet(element) {
+    return EMBEDDED_TWEET_SELECTORS.some((selector) => !!element.closest(selector));
+  }
+  __name(isInsideEmbeddedTweet, "isInsideEmbeddedTweet");
+  function isInsideGenericCard(element) {
+    return !!element.closest(GENERIC_CARD_SELECTOR);
+  }
+  __name(isInsideGenericCard, "isInsideGenericCard");
+  function findActionBar(tweetElement) {
+    if (!tweetElement || !tweetElement.querySelectorAll) return null;
+    const isArticle = typeof Element !== "undefined" && tweetElement instanceof Element && tweetElement.matches("article");
+    const groups = Array.from(tweetElement.querySelectorAll('div[role="group"]')).filter((group) => {
+      if (isArticle && group.closest("article") !== tweetElement) return false;
+      return !isInsideEmbeddedTweet(group);
+    });
+    if (groups.length === 0) return null;
+    const outsideCardGroups = groups.filter((group) => !isInsideGenericCard(group));
+    const candidates = outsideCardGroups.length > 0 ? outsideCardGroups : groups;
+    let bestGroup = null;
+    let bestScore = -1;
+    for (const group of candidates) {
+      const hasReply = !!group.querySelector('[data-testid="reply"]');
+      const hasRetweet = !!group.querySelector('[data-testid="retweet"]');
+      const hasLike = !!group.querySelector('[data-testid="like"], [data-testid="unlike"]');
+      const controlCount = Number(hasReply) + Number(hasRetweet) + Number(hasLike);
+      if (controlCount === 0) continue;
+      const score = controlCount + (hasReply ? 1 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestGroup = group;
+      }
+    }
+    return bestGroup;
+  }
+  __name(findActionBar, "findActionBar");
+  function getMutationArticle(node) {
+    if (typeof Element === "undefined" || !(node instanceof Element)) return null;
+    return node.matches("article") ? node : node.closest("article");
+  }
+  __name(getMutationArticle, "getMutationArticle");
+  function removeStaleSaveButtons(tweetElement, actionBar) {
+    if (!tweetElement.matches("article")) return;
+    for (const button of tweetElement.querySelectorAll("button.xps-save-btn")) {
+      if (button.closest("article") !== tweetElement) continue;
+      if (!actionBar.contains(button)) button.remove();
+    }
+  }
+  __name(removeStaleSaveButtons, "removeStaleSaveButtons");
+
   // src/main.js
   var STORAGE_KEY = "xSavedPosts";
   var STORAGE_SYNC_KEY = "xpsSync";
   var STORAGE_SOFT_LIMIT = 2e3;
   var STORAGE_WARN_THRESHOLD = 1800;
-  var ARTICLE_PROCESSED_ATTR = "data-xps-processed";
   var UI = {
     styleId: "xps-style",
     panelId: "xps-panel",
@@ -273,11 +356,10 @@
   function loadSavedPosts() {
     const raw = storageGet(STORAGE_KEY);
     if (!raw) return [];
+    if (Array.isArray(raw)) return normalizeSavedPosts(raw);
+    if (typeof raw !== "string") return [];
     try {
-      return normalizeSavedPosts(JSON.parse(
-        /** @type {string} */
-        raw
-      ));
+      return normalizeSavedPosts(JSON.parse(raw));
     } catch {
       return [];
     }
@@ -293,6 +375,15 @@
     return true;
   }
   __name(persistSavedPosts, "persistSavedPosts");
+  function commitSavedPosts(nextPosts) {
+    const result = tryCommitSavedPosts(savedPosts, nextPosts, persistSavedPosts);
+    if (!result.committed) return false;
+    savedPosts = /** @type {typeof savedPosts} */
+    result.posts;
+    rebuildIndex();
+    return true;
+  }
+  __name(commitSavedPosts, "commitSavedPosts");
   migrateLegacyStorage();
   var savedPosts = loadSavedPosts();
   var savedKeySet = new Set(savedPosts.map((p) => getPostKey(p)).filter(Boolean));
@@ -329,14 +420,7 @@
     }
     const newPost = sanitizePost(post, { defaultSavedAt: nowIso() });
     if (!newPost) return false;
-    savedPosts.unshift(newPost);
-    const key = getPostKey(newPost);
-    if (key) savedKeySet.add(key);
-    if (!persistSavedPosts(savedPosts)) {
-      savedPosts = savedPosts.filter((p) => p.url !== newPost.url);
-      rebuildIndex();
-      return false;
-    }
+    if (!commitSavedPosts([newPost, ...savedPosts])) return false;
     updatePanelCount();
     updateButtonsForUrl(newPost.url);
     maybeWarnStorageLimit();
@@ -348,9 +432,8 @@
     if (!url || !isSaved(url)) return false;
     const key = getPostKeyFromUrl(url);
     if (!key) return false;
-    savedPosts = savedPosts.filter((p) => getPostKey(p) !== key);
-    rebuildIndex();
-    if (!persistSavedPosts(savedPosts)) return false;
+    const nextPosts = savedPosts.filter((p) => getPostKey(p) !== key);
+    if (!commitSavedPosts(nextPosts)) return false;
     updatePanelCount();
     updateButtonsForUrl(url);
     maybeWarnStorageLimit();
@@ -466,9 +549,7 @@
       return;
     }
     if (!confirm(`Clear ${savedPosts.length} saved posts?`)) return;
-    savedPosts = [];
-    rebuildIndex();
-    persistSavedPosts(savedPosts);
+    if (!commitSavedPosts([])) return;
     updatePanelCount();
     updateAllButtons();
     toast("Cleared saved posts.");
@@ -666,7 +747,8 @@
       if (!href) continue;
       try {
         const abs = new URL(href, "https://x.com").toString();
-        return canonicalizeStatusUrl(abs) || abs;
+        const canonical = canonicalizeStatusUrl(abs);
+        if (canonical) return canonical;
       } catch {
       }
     }
@@ -682,7 +764,8 @@
       if (!href) continue;
       try {
         const abs = new URL(href, "https://x.com").toString();
-        candidates.push({ url: canonicalizeStatusUrl(abs) || abs, link });
+        const canonical = canonicalizeStatusUrl(abs);
+        if (canonical) candidates.push({ url: canonical, link });
       } catch {
       }
     }
@@ -694,12 +777,6 @@
     return candidates[0].url;
   }
   __name(getTweetPermalink, "getTweetPermalink");
-  function markArticleProcessed(article) {
-    if (!(article instanceof Element)) return;
-    if (!article.matches("article")) return;
-    article.setAttribute(ARTICLE_PROCESSED_ATTR, "1");
-  }
-  __name(markArticleProcessed, "markArticleProcessed");
   function findFirstWithinArticle(root, selector, containerArticle) {
     const els = root.querySelectorAll ? root.querySelectorAll(selector) : [];
     for (const el of els) {
@@ -1160,59 +1237,15 @@ ${longform}`;
     }
   }
   __name(onSaveButtonClick, "onSaveButtonClick");
-  var EMBED_CARD_SELECTORS = [
-    '[data-testid="testCondensedMedia"]',
-    '[data-testid="embeddedTweet"]',
-    '[data-testid="card.wrapper"]',
-    'div[aria-label="Embedded Tweet"]',
-    'div[aria-label="Embedded Post"]',
-    'div[aria-label="Embedded post"]'
-  ];
-  function isInsideEmbedOrCard(el) {
-    if (!(el instanceof Element)) return false;
-    for (const sel of EMBED_CARD_SELECTORS) {
-      if (el.closest(sel)) return true;
-    }
-    return false;
-  }
-  __name(isInsideEmbedOrCard, "isInsideEmbedOrCard");
-  function findActionBar(tweetElement) {
-    const reply = tweetElement.querySelector('[data-testid="reply"]');
-    const groupFromReply = reply ? reply.closest('div[role="group"]') : null;
-    if (groupFromReply && !isInsideEmbedOrCard(groupFromReply)) return groupFromReply;
-    const groups = tweetElement.querySelectorAll('div[role="group"]');
-    let bestGroup = null;
-    let bestScore = 0;
-    for (const group of groups) {
-      if (isInsideEmbedOrCard(group)) continue;
-      const hasReply = group.querySelector('[data-testid="reply"]');
-      const hasRetweet = group.querySelector('[data-testid="retweet"]');
-      const hasLike = group.querySelector('[data-testid="like"], [data-testid="unlike"]');
-      const score = (hasReply ? 1 : 0) + (hasRetweet ? 1 : 0) + (hasLike ? 1 : 0);
-      if (score > bestScore) {
-        bestScore = score;
-        bestGroup = group;
-      }
-    }
-    return bestGroup;
-  }
-  __name(findActionBar, "findActionBar");
   function ensureSaveButton(tweetElement) {
     const url = getTweetPermalink(tweetElement);
-    if (!url) {
-      if (tweetElement instanceof Element && tweetElement.matches("article")) {
-        markArticleProcessed(tweetElement);
-      }
-      return;
-    }
+    if (!url) return;
     const actionBar = findActionBar(tweetElement);
-    if (!actionBar) {
-      if (tweetElement instanceof Element && tweetElement.matches("article")) {
-        markArticleProcessed(tweetElement);
-      }
-      return;
-    }
-    let button = actionBar.querySelector("button.xps-save-btn");
+    if (!actionBar) return;
+    let button = (
+      /** @type {HTMLButtonElement|null} */
+      actionBar.querySelector("button.xps-save-btn")
+    );
     if (!button) {
       button = document.createElement("button");
       button.type = "button";
@@ -1225,20 +1258,19 @@ ${longform}`;
       actionBar.appendChild(button);
     }
     setSaveButtonState(button, { saved: isSaved(url), url });
-    if (tweetElement instanceof Element && tweetElement.matches("article")) {
-      markArticleProcessed(tweetElement);
-    }
+    removeStaleSaveButtons(tweetElement, actionBar);
   }
   __name(ensureSaveButton, "ensureSaveButton");
   function scanForTweets(root) {
     if (!root) return;
     if (root instanceof Element && root.matches("article")) {
-      ensureSaveButton(root);
+      if (!root.parentElement?.closest("article")) ensureSaveButton(root);
       return;
     }
-    const selector = `article:not([${ARTICLE_PROCESSED_ATTR}])`;
+    const selector = "article";
     const articles = root.querySelectorAll ? root.querySelectorAll(selector) : [];
     for (const article of articles) {
+      if (article.parentElement?.closest("article")) continue;
       ensureSaveButton(article);
     }
   }
@@ -1274,11 +1306,13 @@ ${longform}`;
     });
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
-        if (!mutation.addedNodes || mutation.addedNodes.length === 0) continue;
+        const targetArticle = getMutationArticle(mutation.target);
+        if (targetArticle) scheduleScan(targetArticle);
         mutation.addedNodes.forEach((node) => {
           if (!(node instanceof Element)) return;
-          if (node.matches("article")) {
-            scheduleScan(node);
+          const owningArticle = getMutationArticle(node);
+          if (owningArticle) {
+            scheduleScan(owningArticle);
             return;
           }
           const article = node.querySelector ? node.querySelector("article") : null;
