@@ -26,6 +26,10 @@ import {
   isArticleReadView,
   removeStaleSaveButtons,
 } from './dom.js';
+// UI CSS (incl. the embedded Ioskeley Mono @font-face faces). Loaded as text
+// so esbuild inlines it into the userscript rather than emitting a separate
+// file — a userscript can only inject a <style> element.
+import uiCss from './main.css';
 
 const STORAGE_KEY = 'xSavedPosts';
 const STORAGE_SYNC_KEY = 'xpsSync';
@@ -395,8 +399,9 @@ function ensureStyles() {
 
   const style = document.createElement('style');
   style.id = UI.styleId;
-  style.textContent = `
-    #${UI.panelId} {
+  style.textContent =
+    uiCss +
+    `    #${UI.panelId} {
       position: fixed;
       right: 16px;
       bottom: 16px;
@@ -455,45 +460,9 @@ function ensureStyles() {
       background: rgba(140, 10, 10, 0.88);
     }
 
-    button.xps-save-btn {
-      appearance: none;
-      border: 1px solid rgba(128, 128, 128, 0.35);
-      background: transparent;
-      color: inherit;
-      cursor: pointer;
-      user-select: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      /* X action bars use align-items: stretch; with an explicit height the
-         pill would top-align, so center it against the native icon buttons. */
-      align-self: center;
-      height: 30px;
-      padding: 0 10px;
-      margin-left: 8px;
-      border-radius: 999px;
-      font: inherit;
-      font-size: 12px;
-      line-height: 1;
-    }
+    /* button.xps-save-btn styles live in src/main.css (which also carries
+       the embedded Ioskeley Mono @font-face); esbuild inlines both. */
 
-    button.xps-save-btn:hover {
-      background: rgba(29, 155, 240, 0.12);
-      border-color: rgba(29, 155, 240, 0.6);
-    }
-
-    button.xps-save-btn.xps-saved {
-      border-color: rgba(0, 186, 124, 0.75);
-      color: rgba(0, 186, 124, 1);
-    }
-
-    button.xps-save-btn.xps-saved:hover {
-      background: rgba(0, 186, 124, 0.12);
-    }
-
-    .xps-save-label {
-      font-weight: 700;
-    }
   `;
 
   (document.head || document.documentElement).appendChild(style);

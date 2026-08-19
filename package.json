@@ -1,10 +1,10 @@
 {
   "name": "xpostsaver",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.js",
+    "build": "node scripts/gen-fonts.js",
     "build:check": "node scripts/build.js --check",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",

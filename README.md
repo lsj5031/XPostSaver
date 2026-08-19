@@ -179,6 +179,15 @@ npm run build
 npm run build:check
 ```
 
+- The build also (re)generates `src/main.css` by subsetting the Ioskeley
+  Mono faces (see `scripts/gen-fonts.js`), which requires `pyftsubset`
+  (fonttools). If it is not on `PATH`, create a virtualenv and install it:
+
+```bash
+python3 -m venv .fonttools-venv
+./.fonttools-venv/bin/pip install fonttools brotli
+```
+
 - Run JS tests:
 
 ```bash
