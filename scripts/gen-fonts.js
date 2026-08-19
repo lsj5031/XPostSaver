@@ -32,10 +32,13 @@ import { dirname, join } from 'path';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const venv = join(root, '.fonttools-venv');
 
-// Characters rendered by the UI: buttons, panel, and all toast strings.
-// Kept ASCII so the embedded faces stay small; add here if new UI text
-// (e.g. punctuation) appears.
-const TEXT = 'SaveSavedExportCopyClearURLS()';
+// Characters rendered by the UI in Ioskeley Mono: the save button, the
+// bottom-right panel buttons + count, and all toast strings. The panel and
+// toast text includes digits, punctuation (`.`, `,`, `?`, etc.) and
+// mixed-case words, so we subset the full printable ASCII range — this
+// keeps the fallback monospace stack from mixing with Ioskel on any UI
+// glyph while keeping the embedded faces tiny.
+const TEXT = Array.from({ length: 95 }, (_, i) => String.fromCharCode(i + 32)).join('');
 
 function subsetToDataUri(weight) {
   const py = existsSync(join(venv, 'bin', 'pyftsubset'))

@@ -412,7 +412,7 @@ function ensureStyles() {
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(6px);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-family: 'Ioskeley Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     }
 
     #${UI.panelId} > button {
@@ -442,7 +442,7 @@ function ensureStyles() {
       color: #fff;
       padding: 10px 12px;
       border-radius: 10px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-family: 'Ioskeley Mono', ui-monospace, 'SF Mono', Menlo, monospace;
       font-size: 13px;
       line-height: 1.2;
       opacity: 0;
