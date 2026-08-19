@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.3.6
-// @description  Adds a "Save" button to posts on X.com. Saved posts are stored locally and can be exported as JSONL (NDJSON).
+// @version      0.3.7
+// @description  Adds a "Save" button to posts on X.com (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON).
 // @match        https://x.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -213,6 +213,11 @@
     'div[aria-label="Embedded post"]'
   ];
   var GENERIC_CARD_SELECTOR = '[data-testid="card.wrapper"]';
+  var ARTICLE_READ_VIEW_SELECTOR = 'article[data-testid="twitterArticleReadView"]';
+  function isArticleReadView(element) {
+    return typeof Element !== "undefined" && element instanceof Element && element.matches(ARTICLE_READ_VIEW_SELECTOR);
+  }
+  __name(isArticleReadView, "isArticleReadView");
   function isInsideEmbeddedTweet(element) {
     return EMBEDDED_TWEET_SELECTORS.some((selector) => !!element.closest(selector));
   }
@@ -662,6 +667,9 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      /* X action bars use align-items: stretch; with an explicit height the
+         pill would top-align, so center it against the native icon buttons. */
+      align-self: center;
       height: 30px;
       padding: 0 10px;
       margin-left: 8px;
@@ -1209,10 +1217,13 @@ ${longform}`;
     event.preventDefault();
     event.stopPropagation();
     const button = event.currentTarget;
-    const tweetElement = button.closest("article") || button.closest('div[data-testid="cellInnerDiv"]');
+    let tweetElement = button.closest("article") || button.closest('div[data-testid="cellInnerDiv"]');
     if (!tweetElement) {
       toast("Could not locate the post container yet.", { type: "error" });
       return;
+    }
+    if (tweetElement instanceof Element && isArticleReadView(tweetElement)) {
+      tweetElement = tweetElement.parentElement?.closest("article") || tweetElement;
     }
     const wasDisabled = button.disabled;
     button.disabled = true;
@@ -1261,17 +1272,28 @@ ${longform}`;
     removeStaleSaveButtons(tweetElement, actionBar);
   }
   __name(ensureSaveButton, "ensureSaveButton");
+  function ensureSaveButtonsForTweet(tweetElement) {
+    ensureSaveButton(tweetElement);
+    for (const nested of tweetElement.querySelectorAll(ARTICLE_READ_VIEW_SELECTOR)) {
+      ensureSaveButton(nested);
+    }
+  }
+  __name(ensureSaveButtonsForTweet, "ensureSaveButtonsForTweet");
   function scanForTweets(root) {
     if (!root) return;
     if (root instanceof Element && root.matches("article")) {
-      if (!root.parentElement?.closest("article")) ensureSaveButton(root);
+      if (!root.parentElement?.closest("article")) ensureSaveButtonsForTweet(root);
+      else if (isArticleReadView(root)) ensureSaveButton(root);
       return;
     }
     const selector = "article";
     const articles = root.querySelectorAll ? root.querySelectorAll(selector) : [];
     for (const article of articles) {
-      if (article.parentElement?.closest("article")) continue;
-      ensureSaveButton(article);
+      if (article.parentElement?.closest("article")) {
+        if (isArticleReadView(article)) ensureSaveButton(article);
+        continue;
+      }
+      ensureSaveButtonsForTweet(article);
     }
   }
   __name(scanForTweets, "scanForTweets");

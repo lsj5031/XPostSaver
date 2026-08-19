@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, it, expect } from 'vitest';
-import { findActionBar, getMutationArticle, removeStaleSaveButtons } from '../src/dom.js';
+import { findActionBar, getMutationArticle, isArticleReadView, removeStaleSaveButtons } from '../src/dom.js';
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -107,5 +107,51 @@ describe('removeStaleSaveButtons', () => {
     expect(current.isConnected).toBe(true);
     expect(stale.isConnected).toBe(false);
     expect(quotedButton.isConnected).toBe(true);
+  });
+
+  it('preserves save buttons in a nested article read view', () => {
+    const outerArticle = document.createElement('article');
+    outerArticle.dataset.testid = 'tweet';
+    const readView = document.createElement('article');
+    readView.dataset.testid = 'twitterArticleReadView';
+    const topBar = addActionGroup(readView);
+    readView.appendChild(topBar);
+    const topButton = document.createElement('button');
+    topButton.className = 'xps-save-btn';
+    topBar.appendChild(topButton);
+    outerArticle.appendChild(readView);
+
+    const bottomBar = addActionGroup(outerArticle);
+    document.body.appendChild(outerArticle);
+
+    removeStaleSaveButtons(outerArticle, bottomBar);
+
+    expect(topButton.isConnected).toBe(true);
+  });
+});
+
+describe('isArticleReadView', () => {
+  it('matches the twitterArticleReadView article', () => {
+    const readView = document.createElement('article');
+    readView.dataset.testid = 'twitterArticleReadView';
+    document.body.appendChild(readView);
+
+    expect(isArticleReadView(readView)).toBe(true);
+  });
+
+  it('does not match regular tweet articles', () => {
+    const tweet = document.createElement('article');
+    tweet.dataset.testid = 'tweet';
+    document.body.appendChild(tweet);
+
+    expect(isArticleReadView(tweet)).toBe(false);
+  });
+
+  it('does not match non-article elements', () => {
+    const div = document.createElement('div');
+    div.dataset.testid = 'twitterArticleReadView';
+    document.body.appendChild(div);
+
+    expect(isArticleReadView(div)).toBe(false);
   });
 });

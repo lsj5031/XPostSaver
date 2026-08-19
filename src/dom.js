@@ -10,6 +10,22 @@ const EMBEDDED_TWEET_SELECTORS = [
 
 const GENERIC_CARD_SELECTOR = '[data-testid="card.wrapper"]';
 
+export const ARTICLE_READ_VIEW_SELECTOR = 'article[data-testid="twitterArticleReadView"]';
+
+/**
+ * Long-form articles render the body inside a nested read-view article whose
+ * action bar sits at the top of the article.
+ *
+ * @param {Element} element
+ */
+export function isArticleReadView(element) {
+  return (
+    typeof Element !== 'undefined' &&
+    element instanceof Element &&
+    element.matches(ARTICLE_READ_VIEW_SELECTOR)
+  );
+}
+
 /** @param {Element} element */
 function isInsideEmbeddedTweet(element) {
   return EMBEDDED_TWEET_SELECTORS.some((selector) => !!element.closest(selector));

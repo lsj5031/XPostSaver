@@ -19,7 +19,13 @@ import {
   normalizeUiLabel,
 } from './utils.js';
 import { tryCommitSavedPosts } from './storage.js';
-import { findActionBar, getMutationArticle, removeStaleSaveButtons } from './dom.js';
+import {
+  ARTICLE_READ_VIEW_SELECTOR,
+  findActionBar,
+  getMutationArticle,
+  isArticleReadView,
+  removeStaleSaveButtons,
+} from './dom.js';
 
 const STORAGE_KEY = 'xSavedPosts';
 const STORAGE_SYNC_KEY = 'xpsSync';
@@ -459,6 +465,9 @@ function ensureStyles() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      /* X action bars use align-items: stretch; with an explicit height the
+         pill would top-align, so center it against the native icon buttons. */
+      align-self: center;
       height: 30px;
       padding: 0 10px;
       margin-left: 8px;
@@ -1151,11 +1160,18 @@ async function onSaveButtonClick(event) {
   event.stopPropagation();
 
   const button = event.currentTarget;
-  const tweetElement = button.closest('article') || button.closest('div[data-testid="cellInnerDiv"]');
+  let tweetElement = button.closest('article') || button.closest('div[data-testid="cellInnerDiv"]');
 
   if (!tweetElement) {
     toast('Could not locate the post container yet.', { type: 'error' });
     return;
+  }
+
+  // A save button inside an article read view is nested in the tweet
+  // <article>. Extract from the enclosing tweet article instead, so the saved
+  // post carries the author and date that live outside the read view.
+  if (tweetElement instanceof Element && isArticleReadView(tweetElement)) {
+    tweetElement = tweetElement.parentElement?.closest('article') || tweetElement;
   }
 
   const wasDisabled = button.disabled;
@@ -1212,19 +1228,34 @@ function ensureSaveButton(tweetElement) {
   removeStaleSaveButtons(tweetElement, actionBar);
 }
 
+function ensureSaveButtonsForTweet(tweetElement) {
+  ensureSaveButton(tweetElement);
+
+  // Long-form articles render a nested read-view <article> whose action bar
+  // sits at the top of the article body. Add a second save button there so
+  // the user does not need to scroll to the bottom of long articles.
+  for (const nested of tweetElement.querySelectorAll(ARTICLE_READ_VIEW_SELECTOR)) {
+    ensureSaveButton(nested);
+  }
+}
+
 function scanForTweets(root) {
   if (!root) return;
 
   if (root instanceof Element && root.matches('article')) {
-    if (!root.parentElement?.closest('article')) ensureSaveButton(root);
+    if (!root.parentElement?.closest('article')) ensureSaveButtonsForTweet(root);
+    else if (isArticleReadView(root)) ensureSaveButton(root);
     return;
   }
 
   const selector = 'article';
   const articles = root.querySelectorAll ? root.querySelectorAll(selector) : [];
   for (const article of articles) {
-    if (article.parentElement?.closest('article')) continue;
-    ensureSaveButton(article);
+    if (article.parentElement?.closest('article')) {
+      if (isArticleReadView(article)) ensureSaveButton(article);
+      continue;
+    }
+    ensureSaveButtonsForTweet(article);
   }
 }
 
