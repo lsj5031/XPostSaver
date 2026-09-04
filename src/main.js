@@ -19,6 +19,7 @@ import {
   normalizeUiLabel,
 } from './utils.js';
 import { tryCommitSavedPosts } from './storage.js';
+import { clampPanelPosition, parsePanelPosition } from './panel-position.js';
 import {
   ARTICLE_READ_VIEW_SELECTOR,
   findActionBar,
@@ -33,6 +34,7 @@ import uiCss from './main.css';
 
 const STORAGE_KEY = 'xSavedPosts';
 const STORAGE_SYNC_KEY = 'xpsSync';
+const PANEL_POSITION_KEY = 'xpsPanelPosition';
 const STORAGE_SOFT_LIMIT = 2000;
 const STORAGE_WARN_THRESHOLD = 1800;
 
@@ -383,6 +385,12 @@ let panelCountEl = null;
 function updatePanelCount() {
   if (!panelCountEl) return;
   panelCountEl.textContent = `(${savedPosts.length})`;
+
+  const panel = document.getElementById(UI.panelId);
+  if (panel) {
+    const rect = panel.getBoundingClientRect();
+    setPanelPosition(panel, { x: rect.left, y: rect.top });
+  }
 }
 
 function updateSavedPostsFromStorage() {
@@ -407,15 +415,18 @@ function ensureStyles() {
       bottom: 16px;
       z-index: 2147483647;
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       padding: 8px;
+      box-sizing: border-box;
+      max-width: calc(100vw - 16px);
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(6px);
       font-family: 'Ioskeley Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     }
 
-    #${UI.panelId} > button {
+    #${UI.panelId} > button:not(.xps-drag-handle) {
       appearance: none;
       border: 1px solid rgba(255, 255, 255, 0.18);
       background: rgba(0, 0, 0, 0.55);
@@ -428,8 +439,32 @@ function ensureStyles() {
       line-height: 1;
     }
 
-    #${UI.panelId} > button:hover {
+    #${UI.panelId} > button:not(.xps-drag-handle):hover {
       background: rgba(255, 255, 255, 0.08);
+    }
+
+    #${UI.panelId} > .xps-drag-handle {
+      appearance: none;
+      align-self: stretch;
+      width: 16px;
+      min-height: 32px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.72) 1.25px, transparent 1.5px)
+        center / 6px 6px;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    #${UI.panelId}[data-dragging="1"] > .xps-drag-handle {
+      cursor: grabbing;
+    }
+
+    #${UI.panelId} > .xps-drag-handle:focus-visible {
+      outline: 2px solid rgb(29, 155, 240);
+      outline-offset: 2px;
     }
 
     #${UI.toastId} {
@@ -468,11 +503,100 @@ function ensureStyles() {
   (document.head || document.documentElement).appendChild(style);
 }
 
+function setPanelPosition(panel, position, { persist = false } = {}) {
+  const rect = panel.getBoundingClientRect();
+  const constrained = clampPanelPosition(
+    position,
+    { width: rect.width, height: rect.height },
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+
+  panel.style.left = `${constrained.x}px`;
+  panel.style.top = `${constrained.y}px`;
+  panel.style.right = 'auto';
+  panel.style.bottom = 'auto';
+
+  if (persist) storageSet(PANEL_POSITION_KEY, JSON.stringify(constrained));
+  return constrained;
+}
+
+function makePanelDraggable(panel, handle) {
+  const storedPosition = parsePanelPosition(storageGet(PANEL_POSITION_KEY));
+  const initialRect = panel.getBoundingClientRect();
+  setPanelPosition(panel, storedPosition || { x: initialRect.left, y: initialRect.top });
+
+  let drag = null;
+
+  handle.addEventListener('pointerdown', (event) => {
+    if (!event.isPrimary || event.button !== 0) return;
+
+    const rect = panel.getBoundingClientRect();
+    drag = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    };
+    panel.dataset.dragging = '1';
+    handle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  handle.addEventListener('pointermove', (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    setPanelPosition(panel, {
+      x: event.clientX - drag.offsetX,
+      y: event.clientY - drag.offsetY,
+    });
+  });
+
+  const finishDrag = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    const rect = panel.getBoundingClientRect();
+    drag = null;
+    delete panel.dataset.dragging;
+    setPanelPosition(panel, { x: rect.left, y: rect.top }, { persist: true });
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+  };
+
+  handle.addEventListener('pointerup', finishDrag);
+  handle.addEventListener('pointercancel', finishDrag);
+
+  handle.addEventListener('keydown', (event) => {
+    const movement = {
+      ArrowLeft: [-16, 0],
+      ArrowRight: [16, 0],
+      ArrowUp: [0, -16],
+      ArrowDown: [0, 16],
+    }[event.key];
+    if (!movement) return;
+
+    const rect = panel.getBoundingClientRect();
+    setPanelPosition(
+      panel,
+      { x: rect.left + movement[0], y: rect.top + movement[1] },
+      { persist: true },
+    );
+    event.preventDefault();
+  });
+
+  window.addEventListener('resize', () => {
+    const rect = panel.getBoundingClientRect();
+    setPanelPosition(panel, { x: rect.left, y: rect.top });
+  });
+}
+
 function ensurePanel() {
   if (document.getElementById(UI.panelId)) return;
 
   const panel = document.createElement('div');
   panel.id = UI.panelId;
+
+  const dragHandle = document.createElement('button');
+  dragHandle.type = 'button';
+  dragHandle.className = 'xps-drag-handle';
+  dragHandle.setAttribute('aria-label', 'Move panel');
+  dragHandle.title = 'Drag to move';
 
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
@@ -511,6 +635,7 @@ function ensurePanel() {
     void copyUrlListToClipboard();
   });
 
+  panel.appendChild(dragHandle);
   panel.appendChild(exportBtn);
   panel.appendChild(copyBtn);
   panel.appendChild(exportUrlsBtn);
@@ -518,6 +643,7 @@ function ensurePanel() {
   panel.appendChild(clearBtn);
 
   (document.documentElement || document.body).appendChild(panel);
+  makePanelDraggable(panel, dragHandle);
   updatePanelCount();
 }
 

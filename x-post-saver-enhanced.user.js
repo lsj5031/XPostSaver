@@ -204,6 +204,35 @@
   }
   __name(tryCommitSavedPosts, "tryCommitSavedPosts");
 
+  // src/panel-position.js
+  var PANEL_VIEWPORT_MARGIN = 8;
+  function finiteNumber(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+  __name(finiteNumber, "finiteNumber");
+  function parsePanelPosition(value) {
+    if (typeof value !== "string" || !value) return null;
+    try {
+      const parsed = JSON.parse(value);
+      const x = finiteNumber(parsed?.x);
+      const y = finiteNumber(parsed?.y);
+      return x == null || y == null ? null : { x, y };
+    } catch {
+      return null;
+    }
+  }
+  __name(parsePanelPosition, "parsePanelPosition");
+  function clampPanelPosition(position, panelSize, viewportSize, margin = PANEL_VIEWPORT_MARGIN) {
+    const safeMargin = Math.max(0, finiteNumber(margin) ?? 0);
+    const maxX = Math.max(safeMargin, viewportSize.width - panelSize.width - safeMargin);
+    const maxY = Math.max(safeMargin, viewportSize.height - panelSize.height - safeMargin);
+    return {
+      x: Math.min(maxX, Math.max(safeMargin, position.x)),
+      y: Math.min(maxY, Math.max(safeMargin, position.y))
+    };
+  }
+  __name(clampPanelPosition, "clampPanelPosition");
+
   // src/dom.js
   var EMBEDDED_TWEET_SELECTORS = [
     '[data-testid="testCondensedMedia"]',
@@ -273,6 +302,7 @@
   // src/main.js
   var STORAGE_KEY = "xSavedPosts";
   var STORAGE_SYNC_KEY = "xpsSync";
+  var PANEL_POSITION_KEY = "xpsPanelPosition";
   var STORAGE_SOFT_LIMIT = 2e3;
   var STORAGE_WARN_THRESHOLD = 1800;
   var UI = {
@@ -585,6 +615,11 @@
   function updatePanelCount() {
     if (!panelCountEl) return;
     panelCountEl.textContent = `(${savedPosts.length})`;
+    const panel = document.getElementById(UI.panelId);
+    if (panel) {
+      const rect = panel.getBoundingClientRect();
+      setPanelPosition(panel, { x: rect.left, y: rect.top });
+    }
   }
   __name(updatePanelCount, "updatePanelCount");
   function updateSavedPostsFromStorage() {
@@ -606,15 +641,18 @@
       bottom: 16px;
       z-index: 2147483647;
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       padding: 8px;
+      box-sizing: border-box;
+      max-width: calc(100vw - 16px);
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(6px);
       font-family: 'Ioskeley Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     }
 
-    #${UI.panelId} > button {
+    #${UI.panelId} > button:not(.xps-drag-handle) {
       appearance: none;
       border: 1px solid rgba(255, 255, 255, 0.18);
       background: rgba(0, 0, 0, 0.55);
@@ -627,8 +665,32 @@
       line-height: 1;
     }
 
-    #${UI.panelId} > button:hover {
+    #${UI.panelId} > button:not(.xps-drag-handle):hover {
       background: rgba(255, 255, 255, 0.08);
+    }
+
+    #${UI.panelId} > .xps-drag-handle {
+      appearance: none;
+      align-self: stretch;
+      width: 16px;
+      min-height: 32px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.72) 1.25px, transparent 1.5px)
+        center / 6px 6px;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+
+    #${UI.panelId}[data-dragging="1"] > .xps-drag-handle {
+      cursor: grabbing;
+    }
+
+    #${UI.panelId} > .xps-drag-handle:focus-visible {
+      outline: 2px solid rgb(29, 155, 240);
+      outline-offset: 2px;
     }
 
     #${UI.toastId} {
@@ -666,10 +728,86 @@
     (document.head || document.documentElement).appendChild(style);
   }
   __name(ensureStyles, "ensureStyles");
+  function setPanelPosition(panel, position, { persist = false } = {}) {
+    const rect = panel.getBoundingClientRect();
+    const constrained = clampPanelPosition(
+      position,
+      { width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight }
+    );
+    panel.style.left = `${constrained.x}px`;
+    panel.style.top = `${constrained.y}px`;
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+    if (persist) storageSet(PANEL_POSITION_KEY, JSON.stringify(constrained));
+    return constrained;
+  }
+  __name(setPanelPosition, "setPanelPosition");
+  function makePanelDraggable(panel, handle) {
+    const storedPosition = parsePanelPosition(storageGet(PANEL_POSITION_KEY));
+    const initialRect = panel.getBoundingClientRect();
+    setPanelPosition(panel, storedPosition || { x: initialRect.left, y: initialRect.top });
+    let drag = null;
+    handle.addEventListener("pointerdown", (event) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      const rect = panel.getBoundingClientRect();
+      drag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+      };
+      panel.dataset.dragging = "1";
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      setPanelPosition(panel, {
+        x: event.clientX - drag.offsetX,
+        y: event.clientY - drag.offsetY
+      });
+    });
+    const finishDrag = /* @__PURE__ */ __name((event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const rect = panel.getBoundingClientRect();
+      drag = null;
+      delete panel.dataset.dragging;
+      setPanelPosition(panel, { x: rect.left, y: rect.top }, { persist: true });
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    }, "finishDrag");
+    handle.addEventListener("pointerup", finishDrag);
+    handle.addEventListener("pointercancel", finishDrag);
+    handle.addEventListener("keydown", (event) => {
+      const movement = {
+        ArrowLeft: [-16, 0],
+        ArrowRight: [16, 0],
+        ArrowUp: [0, -16],
+        ArrowDown: [0, 16]
+      }[event.key];
+      if (!movement) return;
+      const rect = panel.getBoundingClientRect();
+      setPanelPosition(
+        panel,
+        { x: rect.left + movement[0], y: rect.top + movement[1] },
+        { persist: true }
+      );
+      event.preventDefault();
+    });
+    window.addEventListener("resize", () => {
+      const rect = panel.getBoundingClientRect();
+      setPanelPosition(panel, { x: rect.left, y: rect.top });
+    });
+  }
+  __name(makePanelDraggable, "makePanelDraggable");
   function ensurePanel() {
     if (document.getElementById(UI.panelId)) return;
     const panel = document.createElement("div");
     panel.id = UI.panelId;
+    const dragHandle = document.createElement("button");
+    dragHandle.type = "button";
+    dragHandle.className = "xps-drag-handle";
+    dragHandle.setAttribute("aria-label", "Move panel");
+    dragHandle.title = "Drag to move";
     const exportBtn = document.createElement("button");
     exportBtn.type = "button";
     exportBtn.addEventListener("click", downloadJsonl);
@@ -699,12 +837,14 @@
     copyUrlsBtn.addEventListener("click", () => {
       void copyUrlListToClipboard();
     });
+    panel.appendChild(dragHandle);
     panel.appendChild(exportBtn);
     panel.appendChild(copyBtn);
     panel.appendChild(exportUrlsBtn);
     panel.appendChild(copyUrlsBtn);
     panel.appendChild(clearBtn);
     (document.documentElement || document.body).appendChild(panel);
+    makePanelDraggable(panel, dragHandle);
     updatePanelCount();
   }
   __name(ensurePanel, "ensurePanel");
