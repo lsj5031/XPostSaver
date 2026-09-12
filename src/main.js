@@ -18,7 +18,7 @@ import {
   withOriginalImageSize,
   normalizeUiLabel,
 } from './utils.js';
-import { tryCommitSavedPosts } from './storage.js';
+import { tryCommitSavedPosts, withSavedPostsLock } from './storage.js';
 import { clampPanelPosition, parsePanelPosition } from './panel-position.js';
 import {
   ARTICLE_READ_VIEW_SELECTOR,
@@ -122,7 +122,7 @@ function migrateLegacyStorage() {
 }
 
 function broadcastStorageUpdate() {
-  safeLocalStorageSet(STORAGE_SYNC_KEY, String(Date.now()));
+  safeLocalStorageSet(STORAGE_SYNC_KEY, `${Date.now()}:${Math.random()}`);
 }
 
 function loadSavedPosts() {
@@ -189,41 +189,51 @@ function maybeWarnStorageLimit() {
   storageWarned = false;
 }
 
-function addPost(post) {
-  if (!post || typeof post !== 'object' || !post.url) return false;
-  if (isSaved(post.url)) return false;
+async function addPost(post) {
+  return withSavedPostsLock(() => {
+    savedPosts = loadSavedPosts();
+    rebuildIndex();
 
-  if (savedPosts.length >= STORAGE_SOFT_LIMIT) {
-    toast('Storage limit reached. Export or clear before saving more.', { type: 'error' });
-    return false;
-  }
+    if (!post || typeof post !== 'object' || !post.url) return false;
+    if (isSaved(post.url)) return false;
 
-  const newPost = sanitizePost(post, { defaultSavedAt: nowIso() });
-  if (!newPost) return false;
+    if (savedPosts.length >= STORAGE_SOFT_LIMIT) {
+      toast('Storage limit reached. Export or clear before saving more.', { type: 'error' });
+      return false;
+    }
 
-  if (!commitSavedPosts([newPost, ...savedPosts])) return false;
+    const newPost = sanitizePost(post, { defaultSavedAt: nowIso() });
+    if (!newPost) return false;
 
-  updatePanelCount();
-  updateButtonsForUrl(newPost.url);
-  maybeWarnStorageLimit();
-  scheduleScan(document);
-  return true;
+    if (!commitSavedPosts([newPost, ...savedPosts])) return false;
+
+    updatePanelCount();
+    updateButtonsForUrl(newPost.url);
+    maybeWarnStorageLimit();
+    scheduleScan(document);
+    return true;
+  });
 }
 
-function removePost(url) {
-  if (!url || !isSaved(url)) return false;
+async function removePost(url) {
+  return withSavedPostsLock(() => {
+    savedPosts = loadSavedPosts();
+    rebuildIndex();
 
-  const key = getPostKeyFromUrl(url);
-  if (!key) return false;
+    if (!url || !isSaved(url)) return false;
 
-  const nextPosts = savedPosts.filter((p) => getPostKey(p) !== key);
-  if (!commitSavedPosts(nextPosts)) return false;
+    const key = getPostKeyFromUrl(url);
+    if (!key) return false;
 
-  updatePanelCount();
-  updateButtonsForUrl(url);
-  maybeWarnStorageLimit();
-  scheduleScan(document);
-  return true;
+    const nextPosts = savedPosts.filter((p) => getPostKey(p) !== key);
+    if (!commitSavedPosts(nextPosts)) return false;
+
+    updatePanelCount();
+    updateButtonsForUrl(url);
+    maybeWarnStorageLimit();
+    scheduleScan(document);
+    return true;
+  });
 }
 
 function buildJsonl() {
@@ -346,7 +356,8 @@ async function copyUrlListToClipboard() {
   }
 }
 
-function clearAllPosts() {
+async function clearAllPosts() {
+  updateSavedPostsFromStorage();
   if (savedPosts.length === 0) {
     toast('Nothing to clear.');
     return;
@@ -354,7 +365,12 @@ function clearAllPosts() {
 
   if (!confirm(`Clear ${savedPosts.length} saved posts?`)) return;
 
-  if (!commitSavedPosts([])) return;
+  const committed = await withSavedPostsLock(() => {
+    savedPosts = loadSavedPosts();
+    rebuildIndex();
+    return commitSavedPosts([]);
+  });
+  if (!committed) return;
 
   updatePanelCount();
   updateAllButtons();
@@ -1283,12 +1299,12 @@ async function onSaveButtonClick(event) {
 
     button.dataset.url = post.url;
 
-    const key = getPostKey(post);
-    if (key && savedKeySet.has(key)) {
-      const ok = removePost(post.url);
+    const shouldRemove = button.classList.contains('xps-saved');
+    if (shouldRemove) {
+      const ok = await removePost(post.url);
       if (ok) toast('Removed.');
     } else {
-      const ok = addPost(post);
+      const ok = await addPost(post);
       if (ok) toast('Saved.');
     }
   } finally {

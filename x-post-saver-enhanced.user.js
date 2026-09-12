@@ -203,6 +203,19 @@
     return { committed: true, posts: nextPosts };
   }
   __name(tryCommitSavedPosts, "tryCommitSavedPosts");
+  function withSavedPostsLock(task, locks = globalThis.navigator?.locks) {
+    if (!locks || typeof locks.request !== "function") {
+      return (
+        /** @type {Promise<Awaited<T>>} */
+        Promise.resolve().then(task)
+      );
+    }
+    return (
+      /** @type {Promise<Awaited<T>>} */
+      locks.request("xps-saved-posts", task)
+    );
+  }
+  __name(withSavedPostsLock, "withSavedPostsLock");
 
   // src/panel-position.js
   var PANEL_VIEWPORT_MARGIN = 8;
@@ -388,7 +401,7 @@
   }
   __name(migrateLegacyStorage, "migrateLegacyStorage");
   function broadcastStorageUpdate() {
-    safeLocalStorageSet(STORAGE_SYNC_KEY, String(Date.now()));
+    safeLocalStorageSet(STORAGE_SYNC_KEY, `${Date.now()}:${Math.random()}`);
   }
   __name(broadcastStorageUpdate, "broadcastStorageUpdate");
   function loadSavedPosts() {
@@ -449,34 +462,42 @@
     storageWarned = false;
   }
   __name(maybeWarnStorageLimit, "maybeWarnStorageLimit");
-  function addPost(post) {
-    if (!post || typeof post !== "object" || !post.url) return false;
-    if (isSaved(post.url)) return false;
-    if (savedPosts.length >= STORAGE_SOFT_LIMIT) {
-      toast("Storage limit reached. Export or clear before saving more.", { type: "error" });
-      return false;
-    }
-    const newPost = sanitizePost(post, { defaultSavedAt: nowIso() });
-    if (!newPost) return false;
-    if (!commitSavedPosts([newPost, ...savedPosts])) return false;
-    updatePanelCount();
-    updateButtonsForUrl(newPost.url);
-    maybeWarnStorageLimit();
-    scheduleScan(document);
-    return true;
+  async function addPost(post) {
+    return withSavedPostsLock(() => {
+      savedPosts = loadSavedPosts();
+      rebuildIndex();
+      if (!post || typeof post !== "object" || !post.url) return false;
+      if (isSaved(post.url)) return false;
+      if (savedPosts.length >= STORAGE_SOFT_LIMIT) {
+        toast("Storage limit reached. Export or clear before saving more.", { type: "error" });
+        return false;
+      }
+      const newPost = sanitizePost(post, { defaultSavedAt: nowIso() });
+      if (!newPost) return false;
+      if (!commitSavedPosts([newPost, ...savedPosts])) return false;
+      updatePanelCount();
+      updateButtonsForUrl(newPost.url);
+      maybeWarnStorageLimit();
+      scheduleScan(document);
+      return true;
+    });
   }
   __name(addPost, "addPost");
-  function removePost(url) {
-    if (!url || !isSaved(url)) return false;
-    const key = getPostKeyFromUrl(url);
-    if (!key) return false;
-    const nextPosts = savedPosts.filter((p) => getPostKey(p) !== key);
-    if (!commitSavedPosts(nextPosts)) return false;
-    updatePanelCount();
-    updateButtonsForUrl(url);
-    maybeWarnStorageLimit();
-    scheduleScan(document);
-    return true;
+  async function removePost(url) {
+    return withSavedPostsLock(() => {
+      savedPosts = loadSavedPosts();
+      rebuildIndex();
+      if (!url || !isSaved(url)) return false;
+      const key = getPostKeyFromUrl(url);
+      if (!key) return false;
+      const nextPosts = savedPosts.filter((p) => getPostKey(p) !== key);
+      if (!commitSavedPosts(nextPosts)) return false;
+      updatePanelCount();
+      updateButtonsForUrl(url);
+      maybeWarnStorageLimit();
+      scheduleScan(document);
+      return true;
+    });
   }
   __name(removePost, "removePost");
   function buildJsonl() {
@@ -581,13 +602,19 @@
     }
   }
   __name(copyUrlListToClipboard, "copyUrlListToClipboard");
-  function clearAllPosts() {
+  async function clearAllPosts() {
+    updateSavedPostsFromStorage();
     if (savedPosts.length === 0) {
       toast("Nothing to clear.");
       return;
     }
     if (!confirm(`Clear ${savedPosts.length} saved posts?`)) return;
-    if (!commitSavedPosts([])) return;
+    const committed = await withSavedPostsLock(() => {
+      savedPosts = loadSavedPosts();
+      rebuildIndex();
+      return commitSavedPosts([]);
+    });
+    if (!committed) return;
     updatePanelCount();
     updateAllButtons();
     toast("Cleared saved posts.");
@@ -1341,12 +1368,12 @@ ${longform}`;
       }
       if (!post.id) post.id = tweetIdFromUrl(post.url) || "";
       button.dataset.url = post.url;
-      const key = getPostKey(post);
-      if (key && savedKeySet.has(key)) {
-        const ok = removePost(post.url);
+      const shouldRemove = button.classList.contains("xps-saved");
+      if (shouldRemove) {
+        const ok = await removePost(post.url);
         if (ok) toast("Removed.");
       } else {
-        const ok = addPost(post);
+        const ok = await addPost(post);
         if (ok) toast("Saved.");
       }
     } finally {

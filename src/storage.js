@@ -16,3 +16,18 @@ export function tryCommitSavedPosts(currentPosts, nextPosts, persist) {
 
   return { committed: true, posts: nextPosts };
 }
+
+/**
+ * Serialize saved-post mutations across tabs sharing the same origin.
+ *
+ * @template T
+ * @param {() => T} task
+ * @param {LockManager | undefined} [locks]
+ * @returns {Promise<Awaited<T>>}
+ */
+export function withSavedPostsLock(task, locks = globalThis.navigator?.locks) {
+  if (!locks || typeof locks.request !== 'function') {
+    return /** @type {Promise<Awaited<T>>} */ (Promise.resolve().then(task));
+  }
+  return /** @type {Promise<Awaited<T>>} */ (locks.request('xps-saved-posts', task));
+}
