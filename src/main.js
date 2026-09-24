@@ -435,6 +435,7 @@ function ensureStyles() {
       gap: 8px;
       padding: 8px;
       box-sizing: border-box;
+      width: max-content;
       max-width: calc(100vw - 16px);
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.75);
@@ -447,12 +448,14 @@ function ensureStyles() {
       border: 1px solid rgba(255, 255, 255, 0.18);
       background: rgba(0, 0, 0, 0.55);
       color: #fff;
+      box-sizing: border-box;
       padding: 8px 12px;
       border-radius: 999px;
       cursor: pointer;
       font-size: 12px;
       font-weight: 700;
       line-height: 1;
+      white-space: nowrap;
     }
 
     #${UI.panelId} > button:not(.xps-drag-handle):hover {
@@ -481,6 +484,33 @@ function ensureStyles() {
     #${UI.panelId} > .xps-drag-handle:focus-visible {
       outline: 2px solid rgb(29, 155, 240);
       outline-offset: 2px;
+    }
+
+    @media (max-width: 560px) {
+      #${UI.panelId} {
+        display: grid;
+        grid-template-columns: repeat(2, max-content);
+        border-radius: 14px;
+      }
+
+      #${UI.panelId} > .xps-drag-handle {
+        grid-column: 1 / -1;
+        justify-self: center;
+        align-self: center;
+        width: 36px;
+        height: 24px;
+        min-height: 24px;
+      }
+
+      #${UI.panelId} > button:not(.xps-drag-handle):last-child {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 240px) {
+      #${UI.panelId} {
+        grid-template-columns: max-content;
+      }
     }
 
     #${UI.toastId} {
