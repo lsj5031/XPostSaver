@@ -21,13 +21,14 @@ X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI 
 - Uses post-key dedupe (post `id` first, URL normalization fallback) to prevent duplicates.
 - Scans dynamic timeline updates with `MutationObserver` and incremental rescans.
 
-### Manual Grok Fact-check (v0.5.0)
+### Per-post Grok Auto Fact-check (v0.5.1)
 
-- Click **核查** beside Save, including the top action bar of a longform article.
+- Click **核查** beside Save, including the top action bar of a longform article, to **automatically send that selected post to Grok in Auto mode**. This is a manual action per post; no background checks run.
 - Uses the currently loaded post text, source URL, and one level of quoted context to prepare a Chinese fact-check prompt. It does not expand Show more, fetch missing threads/media, or save/unsave the post.
-- Opens X's native **Grok** navigation in the same tab and fills an empty composer. **Review and send it yourself.** There is no automatic submission, retry, queue, xAI API, or private endpoint access.
-- Requires a logged-in X account with access to Grok. Native UI changes, unavailable navigation, a nonempty draft, or timeout leave a visible prompt with **复制提示词**. Clipboard failure leaves it selected for ⌘C / Ctrl+C. Existing Grok drafts are never replaced.
-- Cancel/close or Escape stops pending work. Once inserted, a draft remains in Grok; closing does not erase it. Multiline text is inserted with a single native paste event using event-local data, without reading or changing the system clipboard. Missing composer detection is bounded to 8 seconds, with up to 2 seconds to verify the single insertion settled.
+- Opens X's native **Grok** navigation in the same tab, fills an empty composer, selects and verifies **Auto**, and clicks the unique visible, enabled native **Send** button once. It rechecks cancellation, navigation, the composer, exact prompt, mode, and Send control immediately before clicking. There is no retry, queue, xAI API, or private endpoint access.
+- Requires a logged-in X account with access to Grok. Before-send failures (native UI changes, unavailable navigation, a nonempty draft, mode verification failure, or timeout) stop submission and leave a visible prompt with **复制提示词**. Existing Grok drafts are never replaced or sent. The explicit copy button can change the clipboard; clipboard failure leaves the prompt selected for ⌘C / Ctrl+C. Check the current conversation and draft before any manual fallback.
+- Cancel/close or Escape stops work before Send; after the click it cannot undo submission. An inserted draft is left intact when work stops. Multiline text is inserted with a single native DataTransfer paste event, without reading or changing the system clipboard. Composer detection is bounded to 8 seconds, with up to 2 seconds each for paste verification, Auto menu/selection verification, and Send availability.
+- Success requires a cleared composer and a newly visible copy of the exact prompt in native conversation content within 8 seconds after the click. Missing acknowledgement, navigation, cancellation, or an error after the click reports **uncertain send outcome**, never retries, and asks you to check Grok without resending. A send attempt blocks another check of that post for the current page session, including when its result is uncertain. This is a UI acknowledgement, not proof that Grok completed a response; no results are archived.
 - Open **核查设置** in the floating panel to edit the prompt template, **恢复默认** to restore the Chinese default, then **保存设置**. {url}, {text}, and {quoted} insert the corresponding data; omitted fields are appended so source context is retained. Settings use the separate local key xpsFactCheckTemplate.
 - The default asks for Chinese explanations, important factual claims, original evidence with source links, supported/refuted/unconfirmed conclusions, and explicit reading limitations. Post and quote content are treated as source material, not instructions.
 
@@ -216,7 +217,7 @@ cargo test --manifest-path tools/xps-render-rs/Cargo.toml
 
 - No external API calls are required for saving/exporting posts.
 - Saved posts and prompt settings are stored locally in browser storage.
-- Clicking 核查 places post content into X’s native Grok UI. Sending the draft is your explicit action; X/Grok then processes it under your account and its policies.
+- Clicking 核查 authorizes automatically sending the selected post’s fact-check prompt through X’s native Grok UI in Auto mode. X/Grok processes it under your account and its policies. Automatic handoff does not access the system clipboard or any API; the fallback copy button changes the clipboard only when clicked.
 
 ## License
 

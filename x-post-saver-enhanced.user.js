@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.0
+// @version      0.5.1
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
-// @description  Adds local Save and manual Chinese Grok fact-check buttons to posts on X.com (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
+// @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
 // @match        https://x.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -221,9 +221,14 @@
 
   // src/grok-handoff.js
   var COMPOSER = '[data-lexical-editor="true"][contenteditable="true"][role="textbox"]';
+  var MODEL = 'button[aria-label^="Select a model "]';
+  var SEND = 'button[aria-label="Send"]';
   var onGrok = /* @__PURE__ */ __name(() => /^\/i\/grok(?:\/|$)/.test(location.pathname), "onGrok");
-  var visible = /* @__PURE__ */ __name((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden", "visible");
+  var visible = /* @__PURE__ */ __name((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible" && !element.closest('[hidden], [inert], [aria-hidden="true"]'), "visible");
   var text = /* @__PURE__ */ __name((editor) => (editor.innerText || editor.textContent || "").replace(/\r\n/g, "\n"), "text");
+  var controls = /* @__PURE__ */ __name((selector) => [...document.querySelectorAll(selector)].filter(visible), "controls");
+  var enabled = /* @__PURE__ */ __name((element) => element instanceof HTMLElement && !element.matches(':disabled, [aria-disabled="true"]'), "enabled");
+  var hasMedia = /* @__PURE__ */ __name((editor) => !!editor.querySelector('img, video, audio, [contenteditable="false"]'), "hasMedia");
   function waitFor(read, signal, timeoutMs) {
     return new Promise((resolve, reject) => {
       let timer;
@@ -247,7 +252,7 @@
             return;
           }
           if (Date.now() >= deadline) {
-            finish(new Error("\u7B49\u5F85 Grok \u8F93\u5165\u6846\u8D85\u65F6\u3002"));
+            finish(new Error("\u7B49\u5F85 Grok \u754C\u9762\u786E\u8BA4\u8D85\u65F6\u3002"));
             return;
           }
           timer = setTimeout(check, 50);
@@ -260,7 +265,18 @@
     });
   }
   __name(waitFor, "waitFor");
-  async function handoffToGrok(prompt, signal) {
+  function currentModel() {
+    const models = controls(MODEL);
+    if (models.length !== 1 || !enabled(models[0])) throw new Error("\u65E0\u6CD5\u552F\u4E00\u786E\u8BA4 Grok \u6A21\u5F0F\u6309\u94AE\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+    return (
+      /** @type {HTMLElement} */
+      models[0]
+    );
+  }
+  __name(currentModel, "currentModel");
+  var isAuto = /* @__PURE__ */ __name((model) => model.getAttribute("aria-label") === "Select a model Auto" && text(model).trim() === "Auto", "isAuto");
+  async function handoffToGrok(prompt, signal, onSend = () => {
+  }) {
     if (signal.aborted) throw new DOMException("\u5DF2\u53D6\u6D88", "AbortError");
     if (!onGrok()) {
       const nav = [...document.querySelectorAll('a[href="/i/grok"]')].find(visible);
@@ -271,18 +287,23 @@
       /** @type {HTMLElement} */
       await waitFor(() => {
         if (!onGrok()) return null;
-        const editors = [...document.querySelectorAll(COMPOSER)].filter(visible);
+        const editors = controls(COMPOSER);
         if (editors.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Grok \u8F93\u5165\u6846\uFF0C\u5DF2\u505C\u6B62\u586B\u5199\u3002");
         return editors[0] || null;
       }, signal, 8e3)
     );
-    if (signal.aborted) throw new DOMException("\u5DF2\u53D6\u6D88", "AbortError");
-    const ready = /* @__PURE__ */ __name(() => onGrok() && editor.isConnected && visible(editor) && editor.matches(COMPOSER), "ready");
-    if (!ready()) throw new Error("Grok \u8F93\u5165\u6846\u5DF2\u53D8\u5316\u3002");
-    const hasDraft = /* @__PURE__ */ __name(() => !!editor.textContent || !!editor.querySelector('img, video, audio, [contenteditable="false"]'), "hasDraft");
+    const route = location.href;
+    const ready = /* @__PURE__ */ __name(() => location.href === route && onGrok() && editor.isConnected && visible(editor) && editor.matches(COMPOSER) && controls(COMPOSER).length === 1, "ready");
+    const checkReady = /* @__PURE__ */ __name(() => {
+      if (signal.aborted) throw new DOMException("\u5DF2\u53D6\u6D88", "AbortError");
+      if (!ready()) throw new Error("Grok \u8F93\u5165\u6846\u6216\u9875\u9762\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\uFF1B\u8BF7\u68C0\u67E5\u5F53\u524D\u8349\u7A3F\u3002");
+    }, "checkReady");
+    checkReady();
+    const hasDraft = /* @__PURE__ */ __name(() => !!editor.textContent || hasMedia(editor), "hasDraft");
     if (hasDraft()) throw new Error("Grok \u5DF2\u6709\u8349\u7A3F\uFF0C\u5DF2\u4FDD\u7559\u539F\u6587\u3002");
     editor.focus();
-    if (!ready() || document.activeElement !== editor || hasDraft()) throw new Error("\u65E0\u6CD5\u5B89\u5168\u586B\u5199 Grok \u8F93\u5165\u6846\uFF0C\u5DF2\u6709\u5185\u5BB9\u5C06\u4FDD\u7559\u3002");
+    checkReady();
+    if (document.activeElement !== editor || hasDraft()) throw new Error("\u65E0\u6CD5\u5B89\u5168\u586B\u5199 Grok \u8F93\u5165\u6846\uFF0C\u5DF2\u6709\u5185\u5BB9\u5C06\u4FDD\u7559\u3002");
     const selection = window.getSelection();
     if (!selection) throw new Error("\u65E0\u6CD5\u5B9A\u4F4D Grok \u8F93\u5165\u5149\u6807\u3002");
     const range = document.createRange();
@@ -297,10 +318,71 @@
     if (!paste.defaultPrevented) throw new Error("Grok \u672A\u63A5\u53D7\u7C98\u8D34\u64CD\u4F5C\u3002");
     const insertedAt = Date.now();
     await waitFor(() => {
-      if (!ready()) throw new Error("Grok \u8F93\u5165\u6846\u5DF2\u53D8\u5316\uFF1B\u8BF7\u68C0\u67E5\u5F53\u524D\u8349\u7A3F\u3002");
-      return Date.now() - insertedAt >= 250 && text(editor) === prompt;
+      checkReady();
+      return Date.now() - insertedAt >= 250 && text(editor) === prompt && !hasMedia(editor);
     }, signal, 2e3);
-    return editor;
+    const checkPrompt = /* @__PURE__ */ __name(() => {
+      checkReady();
+      if (text(editor) !== prompt || hasMedia(editor)) throw new Error("Grok \u63D0\u793A\u8BCD\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+    }, "checkPrompt");
+    checkPrompt();
+    const model = currentModel();
+    if (!isAuto(model)) {
+      model.click();
+      const auto = (
+        /** @type {HTMLElement} */
+        await waitFor(() => {
+          checkPrompt();
+          const options = controls('[role="menu"] [role="menuitem"], [role="menu"] button, [role="listbox"] [role="option"]').filter((option) => text(option).trim() === "Auto");
+          if (options.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Auto \u9009\u9879\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+          return options.length === 1 && enabled(options[0]) ? options[0] : null;
+        }, signal, 2e3)
+      );
+      checkPrompt();
+      if (!auto.isConnected || !visible(auto) || !enabled(auto)) throw new Error("Auto \u9009\u9879\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+      auto.click();
+      await waitFor(() => {
+        checkPrompt();
+        return isAuto(currentModel());
+      }, signal, 2e3);
+    }
+    const messages = /* @__PURE__ */ __name(() => controls("main div, main p").filter((element) => !element.closest('.xps-fact-dialog, [contenteditable], [role="textbox"]') && !element.querySelector(COMPOSER) && text(element) === prompt), "messages");
+    const previousMessages = new Set(messages());
+    const send = (
+      /** @type {HTMLButtonElement} */
+      await waitFor(() => {
+        checkPrompt();
+        if (!isAuto(currentModel())) throw new Error("Grok Auto \u6A21\u5F0F\u672A\u786E\u8BA4\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        const sends = controls(SEND);
+        if (sends.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A\u53D1\u9001\u6309\u94AE\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        return sends.length === 1 && enabled(sends[0]) ? sends[0] : null;
+      }, signal, 2e3)
+    );
+    const checkSend = /* @__PURE__ */ __name(() => {
+      checkPrompt();
+      if (!isAuto(currentModel())) throw new Error("Grok Auto \u6A21\u5F0F\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+      const sends = controls(SEND);
+      if (sends.length !== 1 || sends[0] !== send || !send.isConnected || !enabled(send)) throw new Error("\u53D1\u9001\u6309\u94AE\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+    }, "checkSend");
+    checkSend();
+    onSend();
+    checkSend();
+    try {
+      send.click();
+      await waitFor(() => {
+        if (!onGrok()) throw new Error("\u79BB\u5F00 Grok");
+        const editors = controls(COMPOSER);
+        return editors.length === 1 && !text(editors[0]) && !hasMedia(editors[0]) && messages().some((message) => !previousMessages.has(message));
+      }, signal, 8e3);
+    } catch {
+      const error = new Error("\u5DF2\u5C1D\u8BD5\u53D1\u9001\uFF0C\u4F46\u65E0\u6CD5\u786E\u8BA4\u53D1\u9001\u7ED3\u679C\u3002\u4E0D\u4F1A\u91CD\u8BD5\uFF1B\u8BF7\u68C0\u67E5 Grok \u4F1A\u8BDD\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002");
+      error.name = "GrokSendOutcomeUnknown";
+      throw error;
+    }
+    return (
+      /** @type {HTMLElement} */
+      controls(COMPOSER)[0]
+    );
   }
   __name(handoffToGrok, "handoffToGrok");
 
@@ -396,13 +478,14 @@
   __name(makeDialog, "makeDialog");
   function createFactChecker({ storageGet: storageGet2, storageSet: storageSet2, extract, getUrl, handoff }) {
     let active = false;
+    const attempted = /* @__PURE__ */ new Set();
     function settings() {
       if (active) return;
       active = true;
       const ui = makeDialog("\u6838\u67E5\u63D0\u793A\u8BCD\u8BBE\u7F6E", () => {
         active = false;
       });
-      ui.status.textContent = "\u53EF\u4F7F\u7528 {url}\u3001{text}\u3001{quoted}\u3002\u7F3A\u5C11\u7684\u8D44\u6599\u5360\u4F4D\u7B26\u4F1A\u81EA\u52A8\u9644\u5728\u672B\u5C3E\u3002\u4EC5\u5728\u70B9\u51FB\u6838\u67E5\u65F6\u4F7F\u7528\u3002";
+      ui.status.textContent = "\u53EF\u4F7F\u7528 {url}\u3001{text}\u3001{quoted}\u3002\u7F3A\u5C11\u7684\u8D44\u6599\u5360\u4F4D\u7B26\u4F1A\u81EA\u52A8\u9644\u5728\u672B\u5C3E\u3002\u70B9\u51FB\u6838\u67E5\u4F1A\u5C06\u5F53\u524D\u5E16\u5B50\u81EA\u52A8\u53D1\u9001\u5230 Grok Auto\u3002";
       ui.textarea.value = factCheckTemplate(storageGet2(FACT_CHECK_TEMPLATE_KEY));
       ui.actions.append(
         makeButton("\u6062\u590D\u9ED8\u8BA4", () => {
@@ -429,9 +512,14 @@
       const article = button.closest("article");
       const url = article && getUrl(article);
       if (!article || !url) return;
+      if (attempted.has(url)) {
+        button.disabled = true;
+        button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002";
+        return;
+      }
       active = true;
       const controller = new AbortController();
-      const ui = makeDialog("\u624B\u52A8\u6838\u67E5", () => {
+      const ui = makeDialog("\u6838\u67E5\uFF1A\u81EA\u52A8\u53D1\u9001\u5230 Grok Auto", () => {
         controller.abort();
         active = false;
       });
@@ -440,10 +528,11 @@
       button.disabled = true;
       ui.textarea.readOnly = true;
       ui.textarea.hidden = true;
-      ui.status.textContent = "\u6B63\u5728\u51C6\u5907\u5DF2\u52A0\u8F7D\u7684\u5E16\u5B50\u5185\u5BB9\u2026";
+      ui.status.textContent = "\u6B63\u5728\u51C6\u5907\u5F53\u524D\u5E16\u5B50\uFF0C\u5C06\u81EA\u52A8\u53D1\u9001\u5230 Grok Auto\u3002\u53D1\u9001\u524D\u53EF\u53D6\u6D88\uFF1B\u53D1\u9001\u540E\u65E0\u6CD5\u64A4\u56DE\u3002";
+      let sendAttempted = false;
       const copy = makeButton("\u590D\u5236\u63D0\u793A\u8BCD", async () => {
         const copied = await copyFactCheckPrompt(ui.textarea);
-        if (!controller.signal.aborted) ui.status.textContent = copied ? "\u5DF2\u590D\u5236\u3002\u8BF7\u5728 X \u7684 Grok \u4E2D\u7C98\u8D34\uFF0C\u68C0\u67E5\u540E\u81EA\u884C\u53D1\u9001\u3002" : "\u65E0\u6CD5\u81EA\u52A8\u590D\u5236\u3002\u63D0\u793A\u8BCD\u5DF2\u9009\u4E2D\uFF0C\u8BF7\u6309 \u2318C / Ctrl+C\uFF0C\u7136\u540E\u5230 Grok \u7C98\u8D34\u3002";
+        if (!controller.signal.aborted) ui.status.textContent = copied ? "\u5DF2\u590D\u5236\u3002\u8BF7\u5148\u68C0\u67E5 Grok \u4F1A\u8BDD\u53CA\u8349\u7A3F\uFF0C\u907F\u514D\u91CD\u590D\u53D1\u9001\u3002\u9700\u8981\u624B\u52A8\u53D1\u9001\u65F6\u8BF7\u9009\u62E9 Auto\u3002" : "\u65E0\u6CD5\u81EA\u52A8\u590D\u5236\u3002\u63D0\u793A\u8BCD\u5DF2\u9009\u4E2D\uFF0C\u8BF7\u6309 \u2318C / Ctrl+C\uFF0C\u7136\u540E\u5230 Grok \u7C98\u8D34\u3002";
       });
       copy.disabled = true;
       ui.actions.append(copy, makeButton("\u53D6\u6D88 / \u5173\u95ED", ui.close));
@@ -457,11 +546,14 @@
         const prompt = buildFactCheckPrompt(post, factCheckTemplate(storageGet2(FACT_CHECK_TEMPLATE_KEY)));
         ui.textarea.value = prompt;
         ui.textarea.hidden = false;
-        copy.disabled = false;
-        ui.status.textContent = "\u6B63\u5728\u6253\u5F00 Grok\uFF0C\u7B49\u5F85\u7A7A\u767D\u8F93\u5165\u6846\u3002\u4E0D\u4F1A\u81EA\u52A8\u53D1\u9001\uFF1B\u53EF\u968F\u65F6\u53D6\u6D88\u3002";
+        ui.status.textContent = "\u6B63\u5728\u6253\u5F00 Grok\uFF0C\u9A8C\u8BC1\u63D0\u793A\u8BCD\u548C Auto \u6A21\u5F0F\u540E\u5C06\u81EA\u52A8\u53D1\u9001\u4E00\u6B21\u3002\u53D1\u9001\u524D\u53EF\u53D6\u6D88\uFF1B\u53D1\u9001\u540E\u65E0\u6CD5\u64A4\u56DE\u3002";
         ui.dialog.close();
         ui.dialog.show();
-        const editor = await handoff(prompt, controller.signal);
+        const editor = await handoff(prompt, controller.signal, () => {
+          sendAttempted = true;
+          attempted.add(url);
+          ui.status.textContent = "\u5DF2\u5C1D\u8BD5\u53D1\u9001\u5230 Grok Auto\uFF0C\u6B63\u5728\u786E\u8BA4\u4F1A\u8BDD\u3002\u53D6\u6D88\u65E0\u6CD5\u64A4\u56DE\uFF1B\u8BF7\u52FF\u91CD\u590D\u53D1\u9001\u3002";
+        });
         if (controller.signal.aborted) return;
         ui.close();
         editor?.focus();
@@ -469,10 +561,13 @@
         if (!controller.signal.aborted) {
           ui.dialog.close();
           ui.dialog.showModal();
-          ui.status.textContent = (error instanceof Error ? error.message : "\u65E0\u6CD5\u6253\u5F00 Grok\u3002") + (ui.textarea.value ? " \u8BF7\u590D\u5236\u63D0\u793A\u8BCD\uFF0C\u624B\u52A8\u6253\u5F00 X \u7684 Grok \u5E76\u7C98\u8D34\uFF1B\u68C0\u67E5\u540E\u81EA\u884C\u53D1\u9001\u3002" : "");
+          const unknown = sendAttempted || error instanceof Error && error.name === "GrokSendOutcomeUnknown";
+          copy.disabled = unknown || !ui.textarea.value;
+          ui.status.textContent = (error instanceof Error ? error.message : "\u65E0\u6CD5\u6253\u5F00 Grok\u3002") + (!unknown && ui.textarea.value ? " \u8BF7\u590D\u5236\u63D0\u793A\u8BCD\uFF0C\u5148\u68C0\u67E5 X \u7684 Grok \u4F1A\u8BDD\u53CA\u8349\u7A3F\uFF1B\u9700\u8981\u624B\u52A8\u53D1\u9001\u65F6\u8BF7\u9009\u62E9 Auto\u3002" : "");
         }
       } finally {
-        button.disabled = false;
+        button.disabled = sendAttempted && getUrl(article) === url;
+        if (button.disabled) button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002";
         button.textContent = oldLabel;
       }
     }
@@ -481,15 +576,22 @@
       for (const stale of article.querySelectorAll("button.xps-fact-btn")) {
         if (stale.closest("article") === article && !actionBar.contains(stale)) stale.remove();
       }
-      if (actionBar.querySelector("button.xps-fact-btn")) return;
+      const existing = actionBar.querySelector("button.xps-fact-btn");
+      if (existing instanceof HTMLButtonElement) {
+        if (!active) {
+          existing.disabled = attempted.has(getUrl(article));
+          existing.title = existing.disabled ? "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002" : "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto";
+        }
+        return;
+      }
       const button = makeButton("\u6838\u67E5", (event) => {
         event.preventDefault();
         event.stopPropagation();
         void start(button);
       });
       button.className = "xps-fact-btn";
-      button.setAttribute("aria-label", "\u7528 Grok \u624B\u52A8\u6838\u67E5\u5E16\u5B50\uFF08\u4E0D\u4F1A\u81EA\u52A8\u53D1\u9001\uFF09");
-      button.title = "\u51C6\u5907\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\uFF0C\u5728 Grok \u4E2D\u786E\u8BA4\u540E\u81EA\u884C\u53D1\u9001";
+      button.setAttribute("aria-label", "\u6838\u67E5\u5F53\u524D\u5E16\u5B50\uFF08\u81EA\u52A8\u53D1\u9001\u5230 Grok Auto\uFF09");
+      button.title = "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto";
       actionBar.append(button);
     }
     __name(ensureButton, "ensureButton");
@@ -1628,10 +1730,15 @@ ${longform}`;
       if (post && readView) post.text = extractTweetText(readView, readView) || post.text;
       return post;
     }, "extract"),
-    handoff: /* @__PURE__ */ __name(async (prompt, signal) => {
-      const editor = await handoffToGrok(prompt, signal);
-      toast("\u5DF2\u586B\u5165 Grok \u8349\u7A3F\uFF0C\u672A\u53D1\u9001\u3002\u8BF7\u68C0\u67E5\u540E\u81EA\u884C\u53D1\u9001\u3002", { timeoutMs: 6e3 });
-      return editor;
+    handoff: /* @__PURE__ */ __name(async (prompt, signal, onSend) => {
+      try {
+        const editor = await handoffToGrok(prompt, signal, onSend);
+        toast("\u5DF2\u53D1\u9001\u5230 Grok Auto\uFF0C\u5DF2\u786E\u8BA4\u63D0\u793A\u8BCD\u51FA\u73B0\u5728\u4F1A\u8BDD\u4E2D\u3002", { timeoutMs: 6e3 });
+        return editor;
+      } catch (error) {
+        if (error instanceof Error && error.name === "GrokSendOutcomeUnknown") toast(error.message, { timeoutMs: 12e3 });
+        throw error;
+      }
     }, "handoff")
   });
   function setSaveButtonState(button, { saved, url }) {
