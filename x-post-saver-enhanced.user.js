@@ -226,7 +226,7 @@
   var onGrok = /* @__PURE__ */ __name(() => /^\/i\/grok(?:\/|$)/.test(location.pathname), "onGrok");
   var visible = /* @__PURE__ */ __name((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility === "visible" && !element.closest('[hidden], [inert], [aria-hidden="true"]'), "visible");
   var text = /* @__PURE__ */ __name((editor) => (editor.innerText || editor.textContent || "").replace(/\r\n/g, "\n"), "text");
-  var controls = /* @__PURE__ */ __name((selector) => [...document.querySelectorAll(selector)].filter(visible), "controls");
+  var controls = /* @__PURE__ */ __name((selector, root = document) => [...root.querySelectorAll(selector)].filter(visible), "controls");
   var enabled = /* @__PURE__ */ __name((element) => element instanceof HTMLElement && !element.matches(':disabled, [aria-disabled="true"]'), "enabled");
   var hasMedia = /* @__PURE__ */ __name((editor) => !!editor.querySelector('img, video, audio, [contenteditable="false"]'), "hasMedia");
   function waitFor(read, signal, timeoutMs) {
@@ -265,8 +265,8 @@
     });
   }
   __name(waitFor, "waitFor");
-  function currentModel() {
-    const models = controls(MODEL);
+  function currentModel(container) {
+    const models = controls(MODEL, container);
     if (models.length !== 1 || !enabled(models[0])) throw new Error("\u65E0\u6CD5\u552F\u4E00\u786E\u8BA4 Grok \u6A21\u5F0F\u6309\u94AE\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
     return (
       /** @type {HTMLElement} */
@@ -325,12 +325,31 @@
       checkReady();
       if (text(editor) !== prompt || hasMedia(editor)) throw new Error("Grok \u63D0\u793A\u8BCD\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
     }, "checkPrompt");
-    checkPrompt();
-    const model = currentModel();
+    const container = await waitFor(() => {
+      checkPrompt();
+      for (let ancestor = editor.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const editors = controls(COMPOSER, ancestor);
+        const models = controls(MODEL, ancestor);
+        const sends = controls(SEND, ancestor);
+        if (editors.length > 1 || models.length > 1 || sends.length > 1) throw new Error("Grok \u8F93\u5165\u533A\u57DF\u5305\u542B\u591A\u4E2A\u63A7\u4EF6\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        if (editors[0] === editor && models.length === 1 && sends.length === 1) return ancestor;
+      }
+      return null;
+    }, signal, 2e3);
+    const checkControls = /* @__PURE__ */ __name(() => {
+      checkPrompt();
+      if (!container.isConnected || !container.contains(editor) || controls(COMPOSER, container).length !== 1) throw new Error("Grok \u8F93\u5165\u533A\u57DF\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+    }, "checkControls");
+    const model = await waitFor(() => {
+      checkControls();
+      const models = controls(MODEL, container);
+      if (models.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Grok \u6A21\u5F0F\u6309\u94AE\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+      return models.length === 1 && enabled(models[0]) ? currentModel(container) : null;
+    }, signal, 2e3);
     if (!isAuto(model)) {
       if (!model.id) throw new Error("\u65E0\u6CD5\u5B9A\u4F4D Grok \u6A21\u5F0F\u83DC\u5355\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
       const autoOption = /* @__PURE__ */ __name(() => {
-        if (currentModel() !== model) throw new Error("Grok \u6A21\u5F0F\u6309\u94AE\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        if (currentModel(container) !== model) throw new Error("Grok \u6A21\u5F0F\u6309\u94AE\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
         const menus = controls('[role="menu"]').filter((menu) => (menu.getAttribute("aria-labelledby") || "").split(/\s+/).includes(model.id));
         if (menus.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Grok \u6A21\u5F0F\u83DC\u5355\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
         const options = menus.length === 1 ? [...menus[0].querySelectorAll('[role="menuitemradio"]')].filter((option) => visible(option) && option.closest('[role="menu"]') === menus[0] && text(option).trim() === "Auto") : [];
@@ -341,16 +360,16 @@
       const auto = (
         /** @type {HTMLElement} */
         await waitFor(() => {
-          checkPrompt();
+          checkControls();
           return autoOption();
         }, signal, 2e3)
       );
-      checkPrompt();
+      checkControls();
       if (!auto.isConnected || autoOption() !== auto) throw new Error("Auto \u9009\u9879\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
       auto.click();
       await waitFor(() => {
-        checkPrompt();
-        return isAuto(currentModel()) && (!auto.isConnected || !visible(auto) || auto.getAttribute("aria-checked") === "true");
+        checkControls();
+        return isAuto(currentModel(container)) && (!auto.isConnected || !visible(auto) || auto.getAttribute("aria-checked") === "true");
       }, signal, 2e3);
     }
     const messages = /* @__PURE__ */ __name(() => controls("main div, main p").filter((element) => !element.closest('.xps-fact-dialog, [contenteditable], [role="textbox"]') && !element.querySelector(COMPOSER) && text(element) === prompt), "messages");
@@ -358,17 +377,17 @@
     const send = (
       /** @type {HTMLButtonElement} */
       await waitFor(() => {
-        checkPrompt();
-        if (!isAuto(currentModel())) throw new Error("Grok Auto \u6A21\u5F0F\u672A\u786E\u8BA4\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
-        const sends = controls(SEND);
+        checkControls();
+        if (!isAuto(currentModel(container))) throw new Error("Grok Auto \u6A21\u5F0F\u672A\u786E\u8BA4\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        const sends = controls(SEND, container);
         if (sends.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A\u53D1\u9001\u6309\u94AE\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
         return sends.length === 1 && enabled(sends[0]) ? sends[0] : null;
       }, signal, 2e3)
     );
     const checkSend = /* @__PURE__ */ __name(() => {
-      checkPrompt();
-      if (!isAuto(currentModel())) throw new Error("Grok Auto \u6A21\u5F0F\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
-      const sends = controls(SEND);
+      checkControls();
+      if (!isAuto(currentModel(container))) throw new Error("Grok Auto \u6A21\u5F0F\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+      const sends = controls(SEND, container);
       if (sends.length !== 1 || sends[0] !== send || !send.isConnected || !enabled(send)) throw new Error("\u53D1\u9001\u6309\u94AE\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
     }, "checkSend");
     checkSend();

@@ -402,3 +402,50 @@ it('verifies the updated Auto trigger when the native menu unmounts after select
   expect(auto.click).toHaveBeenCalledTimes(1);
   expect(send.click).toHaveBeenCalledTimes(1);
 });
+
+
+function scopedComposer(editor) {
+  const container = document.createElement('div');
+  const middle = document.createElement('div');
+  const inner = document.createElement('div');
+  inner.append(editor); middle.append(inner); container.append(middle, model, send);
+  document.body.append(container);
+  return container;
+}
+
+it('uses the nearest editor ancestor controls and ignores unrelated native controls', async () => {
+  const editor = readyPaste();
+  scopedComposer(editor);
+  const unrelatedSend = send.cloneNode(true);
+  const unrelatedModel = model.cloneNode(true); unrelatedModel.id = 'unrelated-model';
+  document.body.append(unrelatedSend, unrelatedModel);
+  vi.spyOn(unrelatedSend, 'click'); vi.spyOn(unrelatedModel, 'click');
+  const auto = expertMenu();
+  send.addEventListener('click', () => acknowledge(editor, 'prompt'));
+  const done = handoffToGrok('prompt', controller.signal);
+  await vi.advanceTimersByTimeAsync(500); await done;
+  expect(auto.click).toHaveBeenCalledTimes(1);
+  expect(send.click).toHaveBeenCalledTimes(1);
+  expect(unrelatedSend.click).not.toHaveBeenCalled();
+  expect(unrelatedModel.click).not.toHaveBeenCalled();
+});
+
+it.each(['editor', 'model', 'send'])('stops if the %s moves outside the verified editor container before Send', async (target) => {
+  const editor = readyPaste(); scopedComposer(editor);
+  const onSend = () => document.body.append({ editor, model, send }[target]);
+  const done = expect(handoffToGrok('prompt', controller.signal, onSend)).rejects.toThrow();
+  await vi.advanceTimersByTimeAsync(500); await done;
+  expect(send.click).not.toHaveBeenCalled();
+});
+
+it('waits boundedly for the mode button to become enabled', async () => {
+  const editor = readyPaste(); scopedComposer(editor);
+  model.disabled = true;
+  setTimeout(() => { model.disabled = false; }, 500);
+  send.addEventListener('click', () => acknowledge(editor, 'prompt'));
+  const done = handoffToGrok('prompt', controller.signal);
+  await vi.advanceTimersByTimeAsync(300);
+  expect(send.click).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(300); await done;
+  expect(send.click).toHaveBeenCalledTimes(1);
+});
