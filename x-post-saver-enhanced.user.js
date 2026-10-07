@@ -328,22 +328,29 @@
     checkPrompt();
     const model = currentModel();
     if (!isAuto(model)) {
+      if (!model.id) throw new Error("\u65E0\u6CD5\u5B9A\u4F4D Grok \u6A21\u5F0F\u83DC\u5355\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+      const autoOption = /* @__PURE__ */ __name(() => {
+        if (currentModel() !== model) throw new Error("Grok \u6A21\u5F0F\u6309\u94AE\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        const menus = controls('[role="menu"]').filter((menu) => (menu.getAttribute("aria-labelledby") || "").split(/\s+/).includes(model.id));
+        if (menus.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Grok \u6A21\u5F0F\u83DC\u5355\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        const options = menus.length === 1 ? [...menus[0].querySelectorAll('[role="menuitemradio"]')].filter((option) => visible(option) && option.closest('[role="menu"]') === menus[0] && text(option).trim() === "Auto") : [];
+        if (options.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Auto \u9009\u9879\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+        return options.length === 1 && enabled(options[0]) && /^(true|false)$/.test(options[0].getAttribute("aria-checked") || "") ? options[0] : null;
+      }, "autoOption");
       model.click();
       const auto = (
         /** @type {HTMLElement} */
         await waitFor(() => {
           checkPrompt();
-          const options = controls('[role="menu"] [role="menuitem"], [role="menu"] button, [role="listbox"] [role="option"]').filter((option) => text(option).trim() === "Auto");
-          if (options.length > 1) throw new Error("\u53D1\u73B0\u591A\u4E2A Auto \u9009\u9879\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
-          return options.length === 1 && enabled(options[0]) ? options[0] : null;
+          return autoOption();
         }, signal, 2e3)
       );
       checkPrompt();
-      if (!auto.isConnected || !visible(auto) || !enabled(auto)) throw new Error("Auto \u9009\u9879\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
+      if (!auto.isConnected || autoOption() !== auto) throw new Error("Auto \u9009\u9879\u5DF2\u53D8\u5316\uFF0C\u5DF2\u505C\u6B62\u53D1\u9001\u3002");
       auto.click();
       await waitFor(() => {
         checkPrompt();
-        return isAuto(currentModel());
+        return isAuto(currentModel()) && (!auto.isConnected || !visible(auto) || auto.getAttribute("aria-checked") === "true");
       }, signal, 2e3);
     }
     const messages = /* @__PURE__ */ __name(() => controls("main div, main p").filter((element) => !element.closest('.xps-fact-dialog, [contenteditable], [role="textbox"]') && !element.querySelector(COMPOSER) && text(element) === prompt), "messages");

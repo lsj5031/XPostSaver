@@ -93,18 +93,29 @@ export async function handoffToGrok(prompt, signal, onSend = () => {}) {
   checkPrompt();
   const model = currentModel();
   if (!isAuto(model)) {
-    model.click();
-    const auto = /** @type {HTMLElement} */ (await waitFor(() => {
-      checkPrompt();
-      const options = controls('[role="menu"] [role="menuitem"], [role="menu"] button, [role="listbox"] [role="option"]')
-        .filter((option) => text(option).trim() === 'Auto');
+    if (!model.id) throw new Error('无法定位 Grok 模式菜单，已停止发送。');
+    const autoOption = () => {
+      if (currentModel() !== model) throw new Error('Grok 模式按钮已变化，已停止发送。');
+      // Native Base UI links its menu to the trigger by aria-labelledby.
+      // Compare ID tokens directly; never match Auto in an unrelated menu.
+      const menus = controls('[role="menu"]').filter((menu) =>
+        (menu.getAttribute('aria-labelledby') || '').split(/\s+/).includes(model.id));
+      if (menus.length > 1) throw new Error('发现多个 Grok 模式菜单，已停止发送。');
+      const options = menus.length === 1 ? [...menus[0].querySelectorAll('[role="menuitemradio"]')]
+        .filter((option) => visible(option) && option.closest('[role="menu"]') === menus[0] && text(option).trim() === 'Auto') : [];
       if (options.length > 1) throw new Error('发现多个 Auto 选项，已停止发送。');
-      return options.length === 1 && enabled(options[0]) ? options[0] : null;
-    }, signal, 2000));
+      return options.length === 1 && enabled(options[0]) && /^(true|false)$/.test(options[0].getAttribute('aria-checked') || '') ? options[0] : null;
+    };
+    model.click();
+    const auto = /** @type {HTMLElement} */ (await waitFor(() => { checkPrompt(); return autoOption(); }, signal, 2000));
     checkPrompt();
-    if (!auto.isConnected || !visible(auto) || !enabled(auto)) throw new Error('Auto 选项已变化，已停止发送。');
+    if (!auto.isConnected || autoOption() !== auto) throw new Error('Auto 选项已变化，已停止发送。');
     auto.click();
-    await waitFor(() => { checkPrompt(); return isAuto(currentModel()); }, signal, 2000);
+    await waitFor(() => {
+      checkPrompt();
+      // Native menus may unmount after selection; the trigger must show Auto.
+      return isAuto(currentModel()) && (!auto.isConnected || !visible(auto) || auto.getAttribute('aria-checked') === 'true');
+    }, signal, 2000);
   }
   // Acknowledgement needs a newly visible copy of the exact prompt in native
   // conversation content, outside our dialog and every editable field.
