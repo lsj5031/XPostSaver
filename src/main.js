@@ -19,6 +19,8 @@ import {
   normalizeUiLabel,
 } from './utils.js';
 import { tryCommitSavedPosts, withSavedPostsLock } from './storage.js';
+import { handoffToGrok } from './grok-handoff.js';
+import { createFactChecker } from './fact-check.js';
 import { clampPanelPosition, parsePanelPosition } from './panel-position.js';
 import {
   ARTICLE_READ_VIEW_SELECTOR,
@@ -687,6 +689,11 @@ function ensurePanel() {
   panel.appendChild(exportUrlsBtn);
   panel.appendChild(copyUrlsBtn);
   panel.appendChild(clearBtn);
+  const factSettings = document.createElement('button');
+  factSettings.type = 'button';
+  factSettings.textContent = '核查设置';
+  factSettings.addEventListener('click', factChecker.settings);
+  panel.appendChild(factSettings);
 
   (document.documentElement || document.body).appendChild(panel);
   makePanelDraggable(panel, dragHandle);
@@ -1227,14 +1234,14 @@ function findQuotedTweetArticle(tweetArticle, outerUrl) {
   return null;
 }
 
-async function extractPostData(tweetElement, { includeQuoted = true } = {}) {
+async function extractPostData(tweetElement, { includeQuoted = true, expand = true } = {}) {
   const containerArticle =
     tweetElement instanceof Element && tweetElement.matches('article') ? tweetElement : null;
 
   const url = getTweetPermalink(tweetElement);
   if (!url) return null;
 
-  await expandShowMoreIfPresent(tweetElement, containerArticle);
+  if (expand) await expandShowMoreIfPresent(tweetElement, containerArticle);
 
   const timeEl = findFirstWithinArticle(tweetElement, 'time', containerArticle);
   const date = timeEl ? timeEl.getAttribute('datetime') || '' : '';
@@ -1248,13 +1255,30 @@ async function extractPostData(tweetElement, { includeQuoted = true } = {}) {
   let quoted = null;
   if (includeQuoted && containerArticle) {
     const quotedArticle = findQuotedTweetArticle(containerArticle, url);
-    if (quotedArticle) quoted = await extractPostData(quotedArticle, { includeQuoted: false });
+    if (quotedArticle) quoted = await extractPostData(quotedArticle, { includeQuoted: false, expand });
   }
 
   const id = tweetIdFromUrl(url) || '';
 
   return { id, url, author, handle, text, date, links, media, quoted };
 }
+
+const factChecker = createFactChecker({
+  storageGet, storageSet,
+  getUrl: getTweetPermalink,
+  extract: async (article) => {
+    const outer = isArticleReadView(article) ? article.parentElement?.closest('article') || article : article;
+    const post = await extractPostData(outer, { expand: false });
+    const readView = isArticleReadView(article) ? article : article.querySelector(ARTICLE_READ_VIEW_SELECTOR);
+    if (post && readView) post.text = extractTweetText(readView, readView) || post.text;
+    return post;
+  },
+  handoff: async (prompt, signal) => {
+    const editor = await handoffToGrok(prompt, signal);
+    toast('已填入 Grok 草稿，未发送。请检查后自行发送。', { timeoutMs: 6000 });
+    return editor;
+  },
+});
 
 function setSaveButtonState(button, { saved, url }) {
   if (url) button.dataset.url = url;
@@ -1367,6 +1391,7 @@ function ensureSaveButton(tweetElement) {
 
   setSaveButtonState(button, { saved: isSaved(url), url });
   removeStaleSaveButtons(tweetElement, actionBar);
+  factChecker.ensureButton(tweetElement, actionBar);
 }
 
 function ensureSaveButtonsForTweet(tweetElement) {

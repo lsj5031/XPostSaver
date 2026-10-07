@@ -101,7 +101,7 @@ const css = `/*
   src: url('data:font/woff2;base64,${bold}') format('woff2');
 }
 
-button.xps-save-btn {
+button.xps-save-btn, button.xps-fact-btn {
   appearance: none;
   border: 1px solid rgba(128, 128, 128, 0.35);
   background: transparent;
@@ -125,7 +125,7 @@ button.xps-save-btn {
   letter-spacing: 0;
 }
 
-button.xps-save-btn:hover {
+button.xps-save-btn:hover, button.xps-fact-btn:hover {
   background: rgba(29, 155, 240, 0.12);
   border-color: rgba(29, 155, 240, 0.6);
 }
@@ -138,6 +138,31 @@ button.xps-save-btn.xps-saved {
 button.xps-save-btn.xps-saved:hover {
   background: rgba(0, 186, 124, 0.12);
 }
+
+.xps-fact-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  border: 1px solid #777;
+  border-radius: 12px;
+  padding: 16px;
+  background: #15202b;
+  color: #fff;
+  font: 14px/1.5 system-ui, sans-serif;
+}
+.xps-fact-dialog::backdrop { background: #0008; }
+.xps-fact-dialog h2 { font-size: 18px; margin: 0 0 8px; }
+.xps-fact-dialog textarea { box-sizing: border-box; width: 100%; font: inherit; }
+.xps-fact-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.xps-fact-actions button { padding: 8px 12px; cursor: pointer; }
+.xps-fact-dialog :focus-visible, button.xps-fact-btn:focus-visible { outline: 2px solid #1d9bf0; outline-offset: 2px; }
+button.xps-fact-btn:disabled { cursor: wait; opacity: 0.65; }
 
 .xps-save-label {
   font-weight: 700;

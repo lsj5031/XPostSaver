@@ -21,6 +21,16 @@ X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI 
 - Uses post-key dedupe (post `id` first, URL normalization fallback) to prevent duplicates.
 - Scans dynamic timeline updates with `MutationObserver` and incremental rescans.
 
+### Manual Grok Fact-check (v0.5.0)
+
+- Click **核查** beside Save, including the top action bar of a longform article.
+- Uses the currently loaded post text, source URL, and one level of quoted context to prepare a Chinese fact-check prompt. It does not expand Show more, fetch missing threads/media, or save/unsave the post.
+- Opens X's native **Grok** navigation in the same tab and fills an empty composer. **Review and send it yourself.** There is no automatic submission, retry, queue, xAI API, or private endpoint access.
+- Requires a logged-in X account with access to Grok. Native UI changes, unavailable navigation, a nonempty draft, or timeout leave a visible prompt with **复制提示词**. Clipboard failure leaves it selected for ⌘C / Ctrl+C. Existing Grok drafts are never replaced.
+- Cancel/close or Escape stops pending work. Once inserted, a draft remains in Grok; closing does not erase it. Missing composer detection is bounded to 8 seconds, with up to 2 seconds to verify the single insertion settled.
+- Open **核查设置** in the floating panel to edit the prompt template, **恢复默认** to restore the Chinese default, then **保存设置**. {url}, {text}, and {quoted} insert the corresponding data; omitted fields are appended so source context is retained. Settings use the separate local key xpsFactCheckTemplate.
+- The default asks for Chinese explanations, important factual claims, original evidence with source links, supported/refuted/unconfirmed conclusions, and explicit reading limitations. Post and quote content are treated as source material, not instructions.
+
 ### Rich Extraction
 
 For each saved post, extracts:
@@ -205,7 +215,8 @@ cargo test --manifest-path tools/xps-render-rs/Cargo.toml
 ## Privacy
 
 - No external API calls are required for saving/exporting posts.
-- Data is stored locally in browser storage.
+- Saved posts and prompt settings are stored locally in browser storage.
+- Clicking 核查 places post content into X’s native Grok UI. Sending the draft is your explicit action; X/Grok then processes it under your account and its policies.
 
 ## License
 
