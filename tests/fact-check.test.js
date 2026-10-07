@@ -156,3 +156,51 @@ it('copies via legacy or modern API and leaves selected text when clipboard acce
   expect(textarea.selectionStart).toBe(0);
   expect(textarea.selectionEnd).toBe(textarea.value.length);
 });
+
+
+it('announces automatic Auto-mode sending in the accessible button and dialog', async () => {
+  const ctx = setup({ handoff: vi.fn(() => new Promise(() => {})) });
+  expect(ctx.button.getAttribute('aria-label')).toContain('自动发送到 Grok Auto');
+  expect(ctx.button.title).toContain('自动');
+  ctx.button.click(); await flush();
+  expect(document.querySelector('dialog h2').textContent).toContain('自动发送到 Grok Auto');
+  expect(document.querySelector('[role=status]').textContent).toContain('自动发送一次');
+  expect([...document.querySelectorAll('dialog button')].find((b) => b.textContent === '复制提示词').disabled).toBe(true);
+});
+
+it.each(['confirmed', 'unknown'])('blocks another send of the same post after %s outcome, including recycled buttons', async (outcome) => {
+  const ctx = setup({ handoff: vi.fn(async (_prompt, _signal, onSend) => {
+    onSend();
+    if (outcome === 'unknown') {
+      const error = new Error('已尝试发送，但无法确认发送结果。不会重试；请检查 Grok 会话，勿重复发送。');
+      error.name = 'GrokSendOutcomeUnknown';
+      throw error;
+    }
+  }) });
+  ctx.button.click(); await flush();
+  expect(ctx.button.disabled).toBe(true);
+  if (outcome === 'unknown') {
+    expect(document.querySelector('[role=status]').textContent).toContain('勿重复发送');
+    expect(document.querySelector('[role=status]').textContent).not.toContain('请复制提示词');
+    expect([...document.querySelectorAll('dialog button')].find((b) => b.textContent === '复制提示词').disabled).toBe(true);
+    click('取消 / 关闭');
+  }
+  const nextBar = document.createElement('div'); ctx.article.append(nextBar);
+  ctx.checker.ensureButton(ctx.article, nextBar);
+  nextBar.querySelector('button').click(); await flush();
+  expect(ctx.handoff).toHaveBeenCalledTimes(1);
+  expect(nextBar.querySelector('button').disabled).toBe(true);
+});
+
+
+it('allows a different post in a recycled article after a send attempt', async () => {
+  const ctx = setup({ handoff: vi.fn(async (_prompt, _signal, onSend) => { onSend(); }) });
+  ctx.button.click(); await flush();
+  expect(ctx.button.disabled).toBe(true);
+  ctx.article.dataset.url = 'https://x.com/new/status/789';
+  ctx.checker.ensureButton(ctx.article, ctx.bar);
+  expect(ctx.button.disabled).toBe(false);
+  ctx.button.click(); await flush();
+  expect(ctx.handoff).toHaveBeenCalledTimes(2);
+  expect(ctx.handoff.mock.calls[1][0]).toContain(ctx.article.dataset.url);
+});

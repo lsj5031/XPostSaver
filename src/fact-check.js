@@ -91,12 +91,13 @@ function makeDialog(title, onClose) {
 /** One manual action at a time; no queue or persisted pending requests. */
 export function createFactChecker({ storageGet, storageSet, extract, getUrl, handoff }) {
   let active = false;
+  const attempted = new Set();
 
   function settings() {
     if (active) return;
     active = true;
     const ui = makeDialog('核查提示词设置', () => { active = false; });
-    ui.status.textContent = '可使用 {url}、{text}、{quoted}。缺少的资料占位符会自动附在末尾。仅在点击核查时使用。';
+    ui.status.textContent = '可使用 {url}、{text}、{quoted}。缺少的资料占位符会自动附在末尾。点击核查会将当前帖子自动发送到 Grok Auto。';
     ui.textarea.value = factCheckTemplate(storageGet(FACT_CHECK_TEMPLATE_KEY));
     ui.actions.append(
       makeButton('恢复默认', () => { ui.textarea.value = DEFAULT_FACT_CHECK_TEMPLATE; }),
@@ -118,19 +119,25 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
     const article = button.closest('article');
     const url = article && getUrl(article);
     if (!article || !url) return;
+    if (attempted.has(url)) {
+      button.disabled = true;
+      button.title = '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。';
+      return;
+    }
     active = true;
     const controller = new AbortController();
-    const ui = makeDialog('手动核查', () => { controller.abort(); active = false; });
+    const ui = makeDialog('核查：自动发送到 Grok Auto', () => { controller.abort(); active = false; });
     const oldLabel = button.textContent;
     button.textContent = '准备中…';
     button.disabled = true;
     ui.textarea.readOnly = true;
     ui.textarea.hidden = true;
-    ui.status.textContent = '正在准备已加载的帖子内容…';
+    ui.status.textContent = '正在准备当前帖子，将自动发送到 Grok Auto。发送前可取消；发送后无法撤回。';
+    let sendAttempted = false;
     const copy = makeButton('复制提示词', async () => {
       const copied = await copyFactCheckPrompt(ui.textarea);
       if (!controller.signal.aborted) ui.status.textContent = copied
-        ? '已复制。请在 X 的 Grok 中粘贴，检查后自行发送。'
+        ? '已复制。请先检查 Grok 会话及草稿，避免重复发送。需要手动发送时请选择 Auto。'
         : '无法自动复制。提示词已选中，请按 ⌘C / Ctrl+C，然后到 Grok 粘贴。';
     });
     copy.disabled = true;
@@ -145,12 +152,15 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
       const prompt = buildFactCheckPrompt(post, factCheckTemplate(storageGet(FACT_CHECK_TEMPLATE_KEY)));
       ui.textarea.value = prompt;
       ui.textarea.hidden = false;
-      copy.disabled = false;
-      ui.status.textContent = '正在打开 Grok，等待空白输入框。不会自动发送；可随时取消。';
-      // Release modal focus so X can focus its native editor; keep cancel/copy available.
+      ui.status.textContent = '正在打开 Grok，验证提示词和 Auto 模式后将自动发送一次。发送前可取消；发送后无法撤回。';
+      // Release modal focus so X can focus its native editor; keep cancellation available until Send.
       ui.dialog.close();
       ui.dialog.show();
-      const editor = await handoff(prompt, controller.signal);
+      const editor = await handoff(prompt, controller.signal, () => {
+        sendAttempted = true;
+        attempted.add(url);
+        ui.status.textContent = '已尝试发送到 Grok Auto，正在确认会话。取消无法撤回；请勿重复发送。';
+      });
       if (controller.signal.aborted) return;
       ui.close();
       editor?.focus();
@@ -158,10 +168,13 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
       if (!controller.signal.aborted) {
         ui.dialog.close();
         ui.dialog.showModal();
-        ui.status.textContent = (error instanceof Error ? error.message : '无法打开 Grok。') + (ui.textarea.value ? ' 请复制提示词，手动打开 X 的 Grok 并粘贴；检查后自行发送。' : '');
+        const unknown = sendAttempted || (error instanceof Error && error.name === 'GrokSendOutcomeUnknown');
+        copy.disabled = unknown || !ui.textarea.value;
+        ui.status.textContent = (error instanceof Error ? error.message : '无法打开 Grok。') + (!unknown && ui.textarea.value ? ' 请复制提示词，先检查 X 的 Grok 会话及草稿；需要手动发送时请选择 Auto。' : '');
       }
     } finally {
-      button.disabled = false;
+      button.disabled = sendAttempted && getUrl(article) === url;
+      if (button.disabled) button.title = '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。';
       button.textContent = oldLabel;
     }
   }
@@ -170,15 +183,25 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
     for (const stale of article.querySelectorAll('button.xps-fact-btn')) {
       if (stale.closest('article') === article && !actionBar.contains(stale)) stale.remove();
     }
-    if (actionBar.querySelector('button.xps-fact-btn')) return;
+    const existing = actionBar.querySelector('button.xps-fact-btn');
+    if (existing instanceof HTMLButtonElement) {
+      // X recycles article nodes: a previous post's attempt must not disable a new post.
+      if (!active) {
+        existing.disabled = attempted.has(getUrl(article));
+        existing.title = existing.disabled
+          ? '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。'
+          : '点击后自动将当前帖子的中文核查提示词发送到 Grok Auto';
+      }
+      return;
+    }
     const button = makeButton('核查', (event) => {
       event.preventDefault();
       event.stopPropagation();
       void start(button);
     });
     button.className = 'xps-fact-btn';
-    button.setAttribute('aria-label', '用 Grok 手动核查帖子（不会自动发送）');
-    button.title = '准备中文核查提示词，在 Grok 中确认后自行发送';
+    button.setAttribute('aria-label', '核查当前帖子（自动发送到 Grok Auto）');
+    button.title = '点击后自动将当前帖子的中文核查提示词发送到 Grok Auto';
     actionBar.append(button);
   }
 

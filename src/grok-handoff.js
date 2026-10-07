@@ -1,9 +1,14 @@
 // @ts-check
-// Verified against X's logged-in native UI; no service endpoints or submit controls.
+// Native UI only: one paste and, after validation, at most one Send click.
 const COMPOSER = '[data-lexical-editor="true"][contenteditable="true"][role="textbox"]';
+const MODEL = 'button[aria-label^="Select a model "]';
+const SEND = 'button[aria-label="Send"]';
 const onGrok = () => /^\/i\/grok(?:\/|$)/.test(location.pathname);
-const visible = (element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
+const visible = (element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible' && !element.closest('[hidden], [inert], [aria-hidden="true"]');
 const text = (editor) => (editor.innerText || editor.textContent || '').replace(/\r\n/g, '\n');
+const controls = (selector) => [...document.querySelectorAll(selector)].filter(visible);
+const enabled = (element) => element instanceof HTMLElement && !element.matches(':disabled, [aria-disabled="true"]');
+const hasMedia = (editor) => !!editor.querySelector('img, video, audio, [contenteditable="false"]');
 
 function waitFor(read, signal, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -20,7 +25,7 @@ function waitFor(read, signal, timeoutMs) {
       try {
         const result = read();
         if (result) { finish(null, result); return; }
-        if (Date.now() >= deadline) { finish(new Error('等待 Grok 输入框超时。')); return; }
+        if (Date.now() >= deadline) { finish(new Error('等待 Grok 界面确认超时。')); return; }
         timer = setTimeout(check, 50);
       } catch (error) { finish(error); }
     };
@@ -29,7 +34,14 @@ function waitFor(read, signal, timeoutMs) {
   });
 }
 
-export async function handoffToGrok(prompt, signal) {
+function currentModel() {
+  const models = controls(MODEL);
+  if (models.length !== 1 || !enabled(models[0])) throw new Error('无法唯一确认 Grok 模式按钮，已停止发送。');
+  return /** @type {HTMLElement} */ (models[0]);
+}
+const isAuto = (model) => model.getAttribute('aria-label') === 'Select a model Auto' && text(model).trim() === 'Auto';
+
+export async function handoffToGrok(prompt, signal, onSend = () => {}) {
   if (signal.aborted) throw new DOMException('已取消', 'AbortError');
   if (!onGrok()) {
     const nav = [...document.querySelectorAll('a[href="/i/grok"]')].find(visible);
@@ -38,18 +50,23 @@ export async function handoffToGrok(prompt, signal) {
   }
   const editor = /** @type {HTMLElement} */ (await waitFor(() => {
     if (!onGrok()) return null;
-    const editors = [...document.querySelectorAll(COMPOSER)].filter(visible);
+    const editors = controls(COMPOSER);
     if (editors.length > 1) throw new Error('发现多个 Grok 输入框，已停止填写。');
     return editors[0] || null;
   }, signal, 8000));
-  if (signal.aborted) throw new DOMException('已取消', 'AbortError');
-  const ready = () => onGrok() && editor.isConnected && visible(editor) && editor.matches(COMPOSER);
-  if (!ready()) throw new Error('Grok 输入框已变化。');
+  const route = location.href;
+  const ready = () => location.href === route && onGrok() && editor.isConnected && visible(editor) && editor.matches(COMPOSER) && controls(COMPOSER).length === 1;
+  const checkReady = () => {
+    if (signal.aborted) throw new DOMException('已取消', 'AbortError');
+    if (!ready()) throw new Error('Grok 输入框或页面已变化，已停止发送；请检查当前草稿。');
+  };
+  checkReady();
   // Preserve even whitespace and non-text drafts. Only an empty paragraph/BR is safe.
-  const hasDraft = () => !!editor.textContent || !!editor.querySelector('img, video, audio, [contenteditable="false"]');
+  const hasDraft = () => !!editor.textContent || hasMedia(editor);
   if (hasDraft()) throw new Error('Grok 已有草稿，已保留原文。');
   editor.focus();
-  if (!ready() || document.activeElement !== editor || hasDraft()) throw new Error('无法安全填写 Grok 输入框，已有内容将保留。');
+  checkReady();
+  if (document.activeElement !== editor || hasDraft()) throw new Error('无法安全填写 Grok 输入框，已有内容将保留。');
   const selection = window.getSelection();
   if (!selection) throw new Error('无法定位 Grok 输入光标。');
   const range = document.createRange();
@@ -66,9 +83,63 @@ export async function handoffToGrok(prompt, signal) {
   if (!paste.defaultPrevented) throw new Error('Grok 未接受粘贴操作。');
   const insertedAt = Date.now();
   await waitFor(() => {
-    if (!ready()) throw new Error('Grok 输入框已变化；请检查当前草稿。');
-    // Allow Lexical to settle before reporting success, without repeating the edit.
-    return Date.now() - insertedAt >= 250 && text(editor) === prompt;
+    checkReady();
+    return Date.now() - insertedAt >= 250 && text(editor) === prompt && !hasMedia(editor);
   }, signal, 2000);
-  return editor;
+  const checkPrompt = () => {
+    checkReady();
+    if (text(editor) !== prompt || hasMedia(editor)) throw new Error('Grok 提示词已变化，已停止发送。');
+  };
+  checkPrompt();
+  const model = currentModel();
+  if (!isAuto(model)) {
+    model.click();
+    const auto = /** @type {HTMLElement} */ (await waitFor(() => {
+      checkPrompt();
+      const options = controls('[role="menu"] [role="menuitem"], [role="menu"] button, [role="listbox"] [role="option"]')
+        .filter((option) => text(option).trim() === 'Auto');
+      if (options.length > 1) throw new Error('发现多个 Auto 选项，已停止发送。');
+      return options.length === 1 && enabled(options[0]) ? options[0] : null;
+    }, signal, 2000));
+    checkPrompt();
+    if (!auto.isConnected || !visible(auto) || !enabled(auto)) throw new Error('Auto 选项已变化，已停止发送。');
+    auto.click();
+    await waitFor(() => { checkPrompt(); return isAuto(currentModel()); }, signal, 2000);
+  }
+  // Acknowledgement needs a newly visible copy of the exact prompt in native
+  // conversation content, outside our dialog and every editable field.
+  const messages = () => controls('main div, main p').filter((element) =>
+    !element.closest('.xps-fact-dialog, [contenteditable], [role="textbox"]') &&
+    !element.querySelector(COMPOSER) && text(element) === prompt);
+  const previousMessages = new Set(messages());
+  const send = /** @type {HTMLButtonElement} */ (await waitFor(() => {
+    checkPrompt();
+    if (!isAuto(currentModel())) throw new Error('Grok Auto 模式未确认，已停止发送。');
+    const sends = controls(SEND);
+    if (sends.length > 1) throw new Error('发现多个发送按钮，已停止发送。');
+    return sends.length === 1 && enabled(sends[0]) ? sends[0] : null;
+  }, signal, 2000));
+  const checkSend = () => {
+    checkPrompt();
+    if (!isAuto(currentModel())) throw new Error('Grok Auto 模式已变化，已停止发送。');
+    const sends = controls(SEND);
+    if (sends.length !== 1 || sends[0] !== send || !send.isConnected || !enabled(send)) throw new Error('发送按钮已变化，已停止发送。');
+  };
+  checkSend();
+  onSend();
+  checkSend(); // No await between this abort/route/editor/prompt/mode check and click.
+  try {
+    send.click(); // Never retry, even when the click throws or acknowledgement is lost.
+    await waitFor(() => {
+      if (!onGrok()) throw new Error('离开 Grok');
+      const editors = controls(COMPOSER);
+      return editors.length === 1 && !text(editors[0]) && !hasMedia(editors[0]) &&
+        messages().some((message) => !previousMessages.has(message));
+    }, signal, 8000);
+  } catch {
+    const error = new Error('已尝试发送，但无法确认发送结果。不会重试；请检查 Grok 会话，勿重复发送。');
+    error.name = 'GrokSendOutcomeUnknown';
+    throw error;
+  }
+  return /** @type {HTMLElement} */ (controls(COMPOSER)[0]);
 }

@@ -1273,10 +1273,16 @@ const factChecker = createFactChecker({
     if (post && readView) post.text = extractTweetText(readView, readView) || post.text;
     return post;
   },
-  handoff: async (prompt, signal) => {
-    const editor = await handoffToGrok(prompt, signal);
-    toast('已填入 Grok 草稿，未发送。请检查后自行发送。', { timeoutMs: 6000 });
-    return editor;
+  handoff: async (prompt, signal, onSend) => {
+    try {
+      const editor = await handoffToGrok(prompt, signal, onSend);
+      toast('已发送到 Grok Auto，已确认提示词出现在会话中。', { timeoutMs: 6000 });
+      return editor;
+    } catch (error) {
+      // Closing the dialog after a click cannot revoke a native submission.
+      if (error instanceof Error && error.name === 'GrokSendOutcomeUnknown') toast(error.message, { timeoutMs: 12000 });
+      throw error;
+    }
   },
 });
 
