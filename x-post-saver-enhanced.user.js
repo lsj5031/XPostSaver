@@ -398,7 +398,7 @@
       await waitFor(() => {
         if (!onGrok()) throw new Error("\u79BB\u5F00 Grok");
         const editors = controls(COMPOSER);
-        return editors.length === 1 && !text(editors[0]) && !hasMedia(editors[0]) && messages().some((message) => !previousMessages.has(message));
+        return editors.length === 1 && !text(editors[0]).trim() && !hasMedia(editors[0]) && messages().some((message) => !previousMessages.has(message));
       }, signal, 8e3);
     } catch {
       const error = new Error("\u5DF2\u5C1D\u8BD5\u53D1\u9001\uFF0C\u4F46\u65E0\u6CD5\u786E\u8BA4\u53D1\u9001\u7ED3\u679C\u3002\u4E0D\u4F1A\u91CD\u8BD5\uFF1B\u8BF7\u68C0\u67E5 Grok \u4F1A\u8BDD\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002");

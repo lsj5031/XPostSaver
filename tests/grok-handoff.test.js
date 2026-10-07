@@ -449,3 +449,18 @@ it('waits boundedly for the mode button to become enabled', async () => {
   await vi.advanceTimersByTimeAsync(300); await done;
   expect(send.click).toHaveBeenCalledTimes(1);
 });
+
+it('waits for the mode trigger and recognizes native BR-only empty composer after one send', async () => {
+  const editor = readyPaste();
+  model.remove();
+  setTimeout(() => { document.body.append(model); }, 500);
+  send.addEventListener('click', () => {
+    acknowledge(editor, 'prompt');
+    editor.replaceChildren(document.createElement('br'));
+    Object.defineProperty(editor, 'innerText', { configurable: true, value: '\n' });
+  });
+  const done = handoffToGrok('prompt', controller.signal);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(await done).toBe(editor);
+  expect(send.click).toHaveBeenCalledTimes(1);
+});
