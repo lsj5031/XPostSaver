@@ -6,7 +6,8 @@ const SEND = 'button[aria-label="Send"]';
 const onGrok = () => /^\/i\/grok(?:\/|$)/.test(location.pathname);
 const visible = (element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible' && !element.closest('[hidden], [inert], [aria-hidden="true"]');
 const text = (editor) => (editor.innerText || editor.textContent || '').replace(/\r\n/g, '\n');
-const controls = (selector) => [...document.querySelectorAll(selector)].filter(visible);
+/** @param {string} selector @param {ParentNode} [root] */
+const controls = (selector, root = document) => [...root.querySelectorAll(selector)].filter(visible);
 const enabled = (element) => element instanceof HTMLElement && !element.matches(':disabled, [aria-disabled="true"]');
 const hasMedia = (editor) => !!editor.querySelector('img, video, audio, [contenteditable="false"]');
 
@@ -34,8 +35,8 @@ function waitFor(read, signal, timeoutMs) {
   });
 }
 
-function currentModel() {
-  const models = controls(MODEL);
+function currentModel(container) {
+  const models = controls(MODEL, container);
   if (models.length !== 1 || !enabled(models[0])) throw new Error('无法唯一确认 Grok 模式按钮，已停止发送。');
   return /** @type {HTMLElement} */ (models[0]);
 }
@@ -90,12 +91,31 @@ export async function handoffToGrok(prompt, signal, onSend = () => {}) {
     checkReady();
     if (text(editor) !== prompt || hasMedia(editor)) throw new Error('Grok 提示词已变化，已停止发送。');
   };
-  checkPrompt();
-  const model = currentModel();
+  const container = await waitFor(() => {
+    checkPrompt();
+    for (let ancestor = editor.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const editors = controls(COMPOSER, ancestor);
+      const models = controls(MODEL, ancestor);
+      const sends = controls(SEND, ancestor);
+      if (editors.length > 1 || models.length > 1 || sends.length > 1) throw new Error('Grok 输入区域包含多个控件，已停止发送。');
+      if (editors[0] === editor && models.length === 1 && sends.length === 1) return ancestor;
+    }
+    return null;
+  }, signal, 2000);
+  const checkControls = () => {
+    checkPrompt();
+    if (!container.isConnected || !container.contains(editor) || controls(COMPOSER, container).length !== 1) throw new Error('Grok 输入区域已变化，已停止发送。');
+  };
+  const model = await waitFor(() => {
+    checkControls();
+    const models = controls(MODEL, container);
+    if (models.length > 1) throw new Error('发现多个 Grok 模式按钮，已停止发送。');
+    return models.length === 1 && enabled(models[0]) ? currentModel(container) : null;
+  }, signal, 2000);
   if (!isAuto(model)) {
     if (!model.id) throw new Error('无法定位 Grok 模式菜单，已停止发送。');
     const autoOption = () => {
-      if (currentModel() !== model) throw new Error('Grok 模式按钮已变化，已停止发送。');
+      if (currentModel(container) !== model) throw new Error('Grok 模式按钮已变化，已停止发送。');
       // Native Base UI links its menu to the trigger by aria-labelledby.
       // Compare ID tokens directly; never match Auto in an unrelated menu.
       const menus = controls('[role="menu"]').filter((menu) =>
@@ -107,14 +127,14 @@ export async function handoffToGrok(prompt, signal, onSend = () => {}) {
       return options.length === 1 && enabled(options[0]) && /^(true|false)$/.test(options[0].getAttribute('aria-checked') || '') ? options[0] : null;
     };
     model.click();
-    const auto = /** @type {HTMLElement} */ (await waitFor(() => { checkPrompt(); return autoOption(); }, signal, 2000));
-    checkPrompt();
+    const auto = /** @type {HTMLElement} */ (await waitFor(() => { checkControls(); return autoOption(); }, signal, 2000));
+    checkControls();
     if (!auto.isConnected || autoOption() !== auto) throw new Error('Auto 选项已变化，已停止发送。');
     auto.click();
     await waitFor(() => {
-      checkPrompt();
+      checkControls();
       // Native menus may unmount after selection; the trigger must show Auto.
-      return isAuto(currentModel()) && (!auto.isConnected || !visible(auto) || auto.getAttribute('aria-checked') === 'true');
+      return isAuto(currentModel(container)) && (!auto.isConnected || !visible(auto) || auto.getAttribute('aria-checked') === 'true');
     }, signal, 2000);
   }
   // Acknowledgement needs a newly visible copy of the exact prompt in native
@@ -124,16 +144,16 @@ export async function handoffToGrok(prompt, signal, onSend = () => {}) {
     !element.querySelector(COMPOSER) && text(element) === prompt);
   const previousMessages = new Set(messages());
   const send = /** @type {HTMLButtonElement} */ (await waitFor(() => {
-    checkPrompt();
-    if (!isAuto(currentModel())) throw new Error('Grok Auto 模式未确认，已停止发送。');
-    const sends = controls(SEND);
+    checkControls();
+    if (!isAuto(currentModel(container))) throw new Error('Grok Auto 模式未确认，已停止发送。');
+    const sends = controls(SEND, container);
     if (sends.length > 1) throw new Error('发现多个发送按钮，已停止发送。');
     return sends.length === 1 && enabled(sends[0]) ? sends[0] : null;
   }, signal, 2000));
   const checkSend = () => {
-    checkPrompt();
-    if (!isAuto(currentModel())) throw new Error('Grok Auto 模式已变化，已停止发送。');
-    const sends = controls(SEND);
+    checkControls();
+    if (!isAuto(currentModel(container))) throw new Error('Grok Auto 模式已变化，已停止发送。');
+    const sends = controls(SEND, container);
     if (sends.length !== 1 || sends[0] !== send || !send.isConnected || !enabled(send)) throw new Error('发送按钮已变化，已停止发送。');
   };
   checkSend();
