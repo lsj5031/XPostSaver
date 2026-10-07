@@ -61,6 +61,7 @@ beforeEach(() => {
   vi.spyOn(send, 'click');
   document.execCommand = vi.fn(() => true);
   model = document.createElement('button');
+  model.id = 'base-ui-_r_e_';
   model.setAttribute('aria-label', 'Select a model Auto');
   model.textContent = 'Auto';
   document.body.append(model);
@@ -236,10 +237,12 @@ function expertMenu(select = () => {
   model.setAttribute('aria-label', 'Select a model Expert');
   model.textContent = 'Expert';
   const menu = document.createElement('div'); menu.setAttribute('role', 'menu');
-  const auto = document.createElement('button'); auto.setAttribute('role', 'menuitem'); auto.textContent = 'Auto';
+  menu.setAttribute('aria-labelledby', model.id);
+  const auto = document.createElement('button'); auto.setAttribute('role', 'menuitemradio'); auto.textContent = 'Auto';
+  auto.setAttribute('aria-checked', 'false');
   menu.append(auto);
   model.addEventListener('click', () => { document.body.append(menu); });
-  auto.addEventListener('click', select);
+  auto.addEventListener('click', () => { auto.setAttribute('aria-checked', 'true'); select(); });
   vi.spyOn(auto, 'click');
   return auto;
 }
@@ -355,4 +358,47 @@ it.each(['missing', 'ambiguous', 'disabled'])('does not select or send with an %
   await vi.advanceTimersByTimeAsync(3000); await done;
   expect(auto.click).not.toHaveBeenCalled();
   expect(send.click).not.toHaveBeenCalled();
+});
+
+
+it('ignores Auto radio items in unrelated menus', async () => {
+  const editor = readyPaste();
+  const auto = expertMenu();
+  const unrelatedMenu = auto.parentElement.cloneNode(true);
+  unrelatedMenu.setAttribute('aria-labelledby', 'unrelated-button');
+  document.body.append(unrelatedMenu);
+  const unrelated = unrelatedMenu.querySelector('[role="menuitemradio"]');
+  vi.spyOn(unrelated, 'click');
+  send.addEventListener('click', () => acknowledge(editor, 'prompt'));
+  const done = handoffToGrok('prompt', controller.signal);
+  await vi.advanceTimersByTimeAsync(500); await done;
+  expect(auto.click).toHaveBeenCalledTimes(1);
+  expect(unrelated.click).not.toHaveBeenCalled();
+  expect(send.click).toHaveBeenCalledTimes(1);
+});
+
+it.each(['missing trigger ID', 'unlinked menu', 'ambiguous menus', 'missing checked state', 'unchecked after click'])('stops without Send for %s', async (failure) => {
+  readyPaste();
+  const auto = expertMenu();
+  const menu = auto.parentElement;
+  if (failure === 'missing trigger ID') model.removeAttribute('id');
+  if (failure === 'unlinked menu') menu.setAttribute('aria-labelledby', 'unrelated-button');
+  if (failure === 'ambiguous menus') document.body.append(menu.cloneNode(true));
+  if (failure === 'missing checked state') auto.removeAttribute('aria-checked');
+  if (failure === 'unchecked after click') auto.addEventListener('click', () => auto.setAttribute('aria-checked', 'false'));
+  const done = expect(handoffToGrok('prompt', controller.signal)).rejects.toThrow();
+  await vi.advanceTimersByTimeAsync(3000); await done;
+  expect(send.click).not.toHaveBeenCalled();
+  expect(auto.click).toHaveBeenCalledTimes(failure === 'unchecked after click' ? 1 : 0);
+});
+
+it('verifies the updated Auto trigger when the native menu unmounts after selection', async () => {
+  const editor = readyPaste();
+  const auto = expertMenu();
+  auto.addEventListener('click', () => auto.parentElement.remove());
+  send.addEventListener('click', () => acknowledge(editor, 'prompt'));
+  const done = handoffToGrok('prompt', controller.signal);
+  await vi.advanceTimersByTimeAsync(500); await done;
+  expect(auto.click).toHaveBeenCalledTimes(1);
+  expect(send.click).toHaveBeenCalledTimes(1);
 });
