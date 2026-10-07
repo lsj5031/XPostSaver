@@ -57,8 +57,13 @@ export async function handoffToGrok(prompt, signal) {
   range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
-  // One native edit only. Lexical commits asynchronously; do not mutate its DOM.
-  if (!document.execCommand('insertText', false, prompt)) throw new Error('浏览器未接受填写操作。');
+  // One paste event only: Lexical's insertText handling drops line breaks.
+  // DataTransfer is event-local; this does not read or write the system clipboard.
+  const data = new DataTransfer();
+  data.setData('text/plain', prompt);
+  const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
+  editor.dispatchEvent(paste);
+  if (!paste.defaultPrevented) throw new Error('Grok 未接受粘贴操作。');
   const insertedAt = Date.now();
   await waitFor(() => {
     if (!ready()) throw new Error('Grok 输入框已变化；请检查当前草稿。');

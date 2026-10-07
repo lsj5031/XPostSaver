@@ -290,7 +290,11 @@
     range.collapse(true);
     selection.removeAllRanges();
     selection.addRange(range);
-    if (!document.execCommand("insertText", false, prompt)) throw new Error("\u6D4F\u89C8\u5668\u672A\u63A5\u53D7\u586B\u5199\u64CD\u4F5C\u3002");
+    const data = new DataTransfer();
+    data.setData("text/plain", prompt);
+    const paste = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data });
+    editor.dispatchEvent(paste);
+    if (!paste.defaultPrevented) throw new Error("Grok \u672A\u63A5\u53D7\u7C98\u8D34\u64CD\u4F5C\u3002");
     const insertedAt = Date.now();
     await waitFor(() => {
       if (!ready()) throw new Error("Grok \u8F93\u5165\u6846\u5DF2\u53D8\u5316\uFF1B\u8BF7\u68C0\u67E5\u5F53\u524D\u8349\u7A3F\u3002");
