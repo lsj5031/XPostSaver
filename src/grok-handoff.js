@@ -164,7 +164,7 @@ export async function handoffToGrok(prompt, signal, onSend = () => {}) {
     await waitFor(() => {
       if (!onGrok()) throw new Error('离开 Grok');
       const editors = controls(COMPOSER);
-      return editors.length === 1 && !text(editors[0]) && !hasMedia(editors[0]) &&
+      return editors.length === 1 && !text(editors[0]).trim() && !hasMedia(editors[0]) &&
         messages().some((message) => !previousMessages.has(message));
     }, signal, 8000);
   } catch {
