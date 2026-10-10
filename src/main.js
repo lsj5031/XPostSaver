@@ -1454,6 +1454,9 @@ function scheduleScan(root) {
 }
 
 function init() {
+  // X-hosted media card frames match the userscript URL too.
+  if (window.self !== window.top) return;
+
   ensureStyles();
   ensurePanel();
 

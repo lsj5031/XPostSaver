@@ -21,6 +21,17 @@ function setup(content) {
   return { document: window.document, storage };
 }
 
+it('injects controls only in the top-level page, not an embedded player frame', async () => {
+  const { document } = setup('<article><a href="/person/status/123"><time></time></a>' + bar + '<iframe></iframe></article>');
+  const frame = document.querySelector('iframe').contentWindow;
+  frame.document.body.innerHTML = '<article><a href="/person/status/123"><time></time></a>' + bar + '</article>';
+  frame.eval(code);
+  await wait();
+  expect(document.querySelector('#xps-panel')).not.toBeNull();
+  expect(document.querySelectorAll('.xps-save-btn, .xps-fact-btn')).toHaveLength(2);
+  expect(frame.document.querySelector('#xps-panel, #xps-style, .xps-save-btn, .xps-fact-btn')).toBeNull();
+});
+
 it('wires real extraction into manual checks, keeps quoted data, and preserves Save/unsave', async () => {
   const { document, storage } = setup('<article><a href="/person/status/123"><time datetime="2026-10-08"></time></a><div data-testid="tweetText">Outer claim</div><div data-testid="embeddedTweet"><article><a href="/source/status/456"><time></time></a><div data-testid="tweetText">Quoted evidence</div></article></div>' + bar + '</article>');
   await wait();
