@@ -121,7 +121,7 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
     if (!article || !url) return;
     if (attempted.has(url)) {
       button.disabled = true;
-      button.title = '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。';
+      button.title = '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。 (Shift+F)';
       return;
     }
     active = true;
@@ -174,7 +174,7 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
       }
     } finally {
       button.disabled = sendAttempted && getUrl(article) === url;
-      if (button.disabled) button.title = '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。';
+      if (button.disabled) button.title = '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。 (Shift+F)';
       button.textContent = oldLabel;
     }
   }
@@ -189,8 +189,8 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
       if (!active) {
         existing.disabled = attempted.has(getUrl(article));
         existing.title = existing.disabled
-          ? '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。'
-          : '点击后自动将当前帖子的中文核查提示词发送到 Grok Auto';
+          ? '本次页面会话已尝试发送此帖，请在 Grok 中检查，勿重复发送。 (Shift+F)'
+          : '点击后自动将当前帖子的中文核查提示词发送到 Grok Auto (Shift+F)';
       }
       return;
     }
@@ -201,7 +201,8 @@ export function createFactChecker({ storageGet, storageSet, extract, getUrl, han
     });
     button.className = 'xps-fact-btn';
     button.setAttribute('aria-label', '核查当前帖子（自动发送到 Grok Auto）');
-    button.title = '点击后自动将当前帖子的中文核查提示词发送到 Grok Auto';
+    button.setAttribute('aria-keyshortcuts', 'Shift+F');
+    button.title = '点击后自动将当前帖子的中文核查提示词发送到 Grok Auto (Shift+F)';
     actionBar.append(button);
   }
 

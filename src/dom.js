@@ -27,7 +27,7 @@ export function isArticleReadView(element) {
 }
 
 /** @param {Element} element */
-function isInsideEmbeddedTweet(element) {
+export function isInsideEmbeddedTweet(element) {
   return EMBEDDED_TWEET_SELECTORS.some((selector) => !!element.closest(selector));
 }
 

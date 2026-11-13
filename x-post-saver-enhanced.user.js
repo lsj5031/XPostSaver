@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.2
+// @version      0.5.3
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
 // @match        https://x.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_openInTab
 // @run-at       document-end
 // @noframes
 // ==/UserScript==
@@ -541,7 +542,7 @@
       if (!article || !url) return;
       if (attempted.has(url)) {
         button.disabled = true;
-        button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002";
+        button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (Shift+F)";
         return;
       }
       active = true;
@@ -594,7 +595,7 @@
         }
       } finally {
         button.disabled = sendAttempted && getUrl(article) === url;
-        if (button.disabled) button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002";
+        if (button.disabled) button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (Shift+F)";
         button.textContent = oldLabel;
       }
     }
@@ -607,7 +608,7 @@
       if (existing instanceof HTMLButtonElement) {
         if (!active) {
           existing.disabled = attempted.has(getUrl(article));
-          existing.title = existing.disabled ? "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002" : "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto";
+          existing.title = existing.disabled ? "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (Shift+F)" : "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto (Shift+F)";
         }
         return;
       }
@@ -618,7 +619,8 @@
       });
       button.className = "xps-fact-btn";
       button.setAttribute("aria-label", "\u6838\u67E5\u5F53\u524D\u5E16\u5B50\uFF08\u81EA\u52A8\u53D1\u9001\u5230 Grok Auto\uFF09");
-      button.title = "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto";
+      button.setAttribute("aria-keyshortcuts", "Shift+F");
+      button.title = "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto (Shift+F)";
       actionBar.append(button);
     }
     __name(ensureButton, "ensureButton");
@@ -1319,8 +1321,18 @@
     updatePanelCount();
   }
   __name(ensurePanel, "ensurePanel");
-  function getTweetPermalink(tweetElement) {
+  function getTweetPermalink(tweetElement, { ownOnly = false } = {}) {
     const containerArticle = tweetElement instanceof Element && tweetElement.matches("article") ? tweetElement : null;
+    function isOwnPermalink(link) {
+      if (!link || isInsideEmbeddedTweet(link) || link.closest('[data-testid="card.wrapper"], [data-testid="tweetText"]')) return false;
+      try {
+        const url = new URL(link.getAttribute("href"), "https://x.com");
+        return /^\/(?:[^/]+\/status|i\/web\/status|status)\/\d+\/?$/.test(url.pathname);
+      } catch {
+        return false;
+      }
+    }
+    __name(isOwnPermalink, "isOwnPermalink");
     const timeEls = tweetElement.querySelectorAll ? tweetElement.querySelectorAll("time") : [];
     for (const timeEl of timeEls) {
       if (containerArticle) {
@@ -1328,6 +1340,7 @@
         if (closestArticle && closestArticle !== containerArticle) continue;
       }
       const link = timeEl.closest('a[href*="/status/"]');
+      if (ownOnly && !isOwnPermalink(link)) continue;
       const href = link ? link.getAttribute("href") : null;
       if (!href) continue;
       try {
@@ -1341,6 +1354,7 @@
     const candidates = [];
     const quoteContainerSelector = '[data-testid="testCondensedMedia"], [data-testid="embeddedTweet"], div[aria-label="Embedded Tweet"], div[aria-label="Embedded Post"], div[aria-label="Embedded post"]';
     for (const link of statusLinks) {
+      if (ownOnly && !isOwnPermalink(link)) continue;
       if (containerArticle) {
         const closestArticle = link.closest("article");
         if (closestArticle && closestArticle !== containerArticle) continue;
@@ -1355,6 +1369,10 @@
       }
     }
     if (candidates.length === 0) return null;
+    if (ownOnly) {
+      const urls = new Set(candidates.map((candidate) => candidate.url));
+      return urls.size === 1 ? candidates[0].url : null;
+    }
     if (containerArticle) {
       const preferred = candidates.find((c) => !c.link.closest(quoteContainerSelector));
       if (preferred) return preferred.url;
@@ -1362,6 +1380,65 @@
     return candidates[0].url;
   }
   __name(getTweetPermalink, "getTweetPermalink");
+  function getFocusedShortcutPost(event) {
+    const focused = document.activeElement;
+    const editorSelector = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+    if (!(focused instanceof Element) || focused.closest(editorSelector) || event.target instanceof Element && event.target.closest(editorSelector)) return;
+    let article = focused.closest("article");
+    if (!article && focused.matches('[data-testid="cellInnerDiv"]')) {
+      const articles = Array.from(focused.querySelectorAll("article")).filter((candidate) => !candidate.parentElement?.closest("article"));
+      if (articles.length === 1) article = articles[0];
+    }
+    if (!article) return;
+    for (let outer = article.parentElement?.closest("article"); outer; outer = article.parentElement?.closest("article")) {
+      article = outer;
+    }
+    const dialog = focused.closest('dialog, [role="dialog"], [role="alertdialog"]');
+    if (dialog && !dialog.contains(article)) return;
+    return article;
+  }
+  __name(getFocusedShortcutPost, "getFocusedShortcutPost");
+  function onPostShortcut(event) {
+    const key = event.key.toLowerCase();
+    if (!["enter", "s", "f"].includes(key) || !event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
+    const article = getFocusedShortcutPost(event);
+    if (!article) return;
+    if (key !== "enter") {
+      const selector = key === "s" ? "button.xps-save-btn" : "button.xps-fact-btn";
+      const button = Array.from(article.querySelectorAll(selector)).find((candidate) => {
+        if (isInsideEmbeddedTweet(candidate)) return false;
+        const owner = candidate.closest("article");
+        return owner === article || owner && isArticleReadView(owner) && owner.parentElement?.closest("article") === article;
+      });
+      if (!(button instanceof HTMLButtonElement) || button.matches(":disabled") || button.getAttribute("aria-disabled") === "true") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      button.click();
+      return;
+    }
+    const url = getTweetPermalink(article, { ownOnly: true });
+    if (!url) return;
+    const gm = (
+      /** @type {GlobalWithGM} */
+      globalThis
+    );
+    if (typeof gm.GM_openInTab !== "function") {
+      toast("Background tabs require GM_openInTab. Update/re-enable X Post Saver in your userscript manager and allow its tab permission.", { type: "error" });
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const failed = /* @__PURE__ */ __name(() => toast("Could not open the background tab. Check your userscript manager\u2019s tab permission and try again.", { type: "error" }), "failed");
+    try {
+      const result = gm.GM_openInTab(url, { active: false, insert: true, setParent: true });
+      void Promise.resolve(result).then((tab) => {
+        if (tab === null || tab === false) failed();
+      }, failed);
+    } catch {
+      failed();
+    }
+  }
+  __name(onPostShortcut, "onPostShortcut");
   function findFirstWithinArticle(root, selector, containerArticle) {
     const els = root.querySelectorAll ? root.querySelectorAll(selector) : [];
     for (const el of els) {
@@ -1773,16 +1850,17 @@ ${longform}`;
     if (saved) {
       button.classList.add("xps-saved");
       button.setAttribute("aria-label", "Remove saved post");
-      button.title = "Remove from local saves";
+      button.title = "Remove from local saves (Shift+S)";
       const label = button.querySelector(".xps-save-label");
       if (label) label.textContent = "Saved";
     } else {
       button.classList.remove("xps-saved");
       button.setAttribute("aria-label", "Save post locally");
-      button.title = "Save post locally";
+      button.title = "Save post locally (Shift+S)";
       const label = button.querySelector(".xps-save-label");
       if (label) label.textContent = "Save";
     }
+    button.setAttribute("aria-keyshortcuts", "Shift+S");
   }
   __name(setSaveButtonState, "setSaveButtonState");
   function updateButtonsForUrl(url) {
@@ -1920,6 +1998,7 @@ ${longform}`;
     if (window.self !== window.top) return;
     ensureStyles();
     ensurePanel();
+    document.addEventListener("keydown", onPostShortcut, true);
     scheduleScan(document);
     maybeWarnStorageLimit();
     window.addEventListener("storage", (event) => {

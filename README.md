@@ -20,6 +20,8 @@ X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI 
 - Supports save and unsave in place.
 - Uses post-key dedupe (post `id` first, URL normalization fallback) to prevent duplicates.
 - Scans dynamic timeline updates with `MutationObserver` and incremental rescans.
+- Use X’s **j/k** navigation to focus a post, then **Shift+Enter** to open it in a new background tab, **Shift+S** to toggle Save/Saved, or **Shift+F** to run 核查, which **automatically sends the post’s fact-check prompt to Grok Auto**. Save and fact-check use the existing enabled buttons, including the longform top bar. Focus must be on the post, a descendant, or its single-post timeline cell; hovering alone does not select a post. Editors, unrelated dialogs, repeated/composing keys, extra modifiers, and absent/disabled action buttons are ignored.
+- Background opening requires your userscript manager’s `GM_openInTab` API and grant. Missing permissions or opening failures show an error, with no focus-stealing `window.open` fallback. Shortcuts are covered by DOM fixtures and bundle tests, not verified against live X; tests use the local fallback when Grok is absent and do not send network requests.
 
 ### Per-post Grok Auto Fact-check (v0.5.1)
 

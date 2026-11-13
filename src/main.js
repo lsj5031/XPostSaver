@@ -3,6 +3,7 @@
  * @typedef {typeof globalThis & {
  *   GM_getValue?: (key: string, defaultValue?: unknown) => unknown;
  *   GM_setValue?: (key: string, value: unknown) => void;
+ *   GM_openInTab?: (url: string, options: {active: boolean, insert: boolean, setParent: boolean}) => unknown;
  * }} GlobalWithGM
  */
 import {
@@ -27,6 +28,7 @@ import {
   findActionBar,
   getMutationArticle,
   isArticleReadView,
+  isInsideEmbeddedTweet,
   removeStaleSaveButtons,
 } from './dom.js';
 // UI CSS (incl. the embedded Ioskeley Mono @font-face faces). Loaded as text
@@ -700,9 +702,20 @@ function ensurePanel() {
   updatePanelCount();
 }
 
-function getTweetPermalink(tweetElement) {
+function getTweetPermalink(tweetElement, { ownOnly = false } = {}) {
   const containerArticle =
     tweetElement instanceof Element && tweetElement.matches('article') ? tweetElement : null;
+
+  function isOwnPermalink(link) {
+    if (!link || isInsideEmbeddedTweet(link) ||
+        link.closest('[data-testid="card.wrapper"], [data-testid="tweetText"]')) return false;
+    try {
+      const url = new URL(link.getAttribute('href'), 'https://x.com');
+      return /^\/(?:[^/]+\/status|i\/web\/status|status)\/\d+\/?$/.test(url.pathname);
+    } catch {
+      return false;
+    }
+  }
 
   const timeEls = tweetElement.querySelectorAll ? tweetElement.querySelectorAll('time') : [];
   for (const timeEl of timeEls) {
@@ -712,6 +725,7 @@ function getTweetPermalink(tweetElement) {
     }
 
     const link = timeEl.closest('a[href*="/status/"]');
+    if (ownOnly && !isOwnPermalink(link)) continue;
     const href = link ? link.getAttribute('href') : null;
     if (!href) continue;
 
@@ -732,6 +746,7 @@ function getTweetPermalink(tweetElement) {
     '[data-testid="testCondensedMedia"], [data-testid="embeddedTweet"], div[aria-label="Embedded Tweet"], div[aria-label="Embedded Post"], div[aria-label="Embedded post"]';
 
   for (const link of statusLinks) {
+    if (ownOnly && !isOwnPermalink(link)) continue;
     if (containerArticle) {
       const closestArticle = link.closest('article');
       if (closestArticle && closestArticle !== containerArticle) continue;
@@ -750,6 +765,10 @@ function getTweetPermalink(tweetElement) {
   }
 
   if (candidates.length === 0) return null;
+  if (ownOnly) {
+    const urls = new Set(candidates.map((candidate) => candidate.url));
+    return urls.size === 1 ? candidates[0].url : null;
+  }
 
   // When extracting the *main* tweet URL, avoid picking URLs from quoted tweet cards.
   if (containerArticle) {
@@ -758,6 +777,74 @@ function getTweetPermalink(tweetElement) {
   }
 
   return candidates[0].url;
+}
+
+/** @param {KeyboardEvent} event */
+function getFocusedShortcutPost(event) {
+  const focused = document.activeElement;
+  const editorSelector = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+  if (!(focused instanceof Element) || focused.closest(editorSelector) ||
+      (event.target instanceof Element && event.target.closest(editorSelector))) return;
+
+  let article = focused.closest('article');
+  if (!article && focused.matches('[data-testid="cellInnerDiv"]')) {
+    const articles = Array.from(focused.querySelectorAll('article'))
+      .filter((candidate) => !candidate.parentElement?.closest('article'));
+    if (articles.length === 1) article = articles[0];
+  }
+  if (!article) return;
+  // A quote or longform read view belongs to the enclosing timeline post.
+  for (let outer = article.parentElement?.closest('article'); outer;
+    outer = article.parentElement?.closest('article')) {
+    article = outer;
+  }
+  const dialog = focused.closest('dialog, [role="dialog"], [role="alertdialog"]');
+  if (dialog && !dialog.contains(article)) return;
+  return article;
+}
+
+/** @param {KeyboardEvent} event */
+function onPostShortcut(event) {
+  const key = event.key.toLowerCase();
+  if (!['enter', 's', 'f'].includes(key) || !event.shiftKey || event.ctrlKey || event.metaKey ||
+      event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
+  const article = getFocusedShortcutPost(event);
+  if (!article) return;
+
+  if (key !== 'enter') {
+    const selector = key === 's' ? 'button.xps-save-btn' : 'button.xps-fact-btn';
+    const button = Array.from(article.querySelectorAll(selector)).find((candidate) => {
+      if (isInsideEmbeddedTweet(candidate)) return false;
+      const owner = candidate.closest('article');
+      return owner === article || (owner && isArticleReadView(owner) && owner.parentElement?.closest('article') === article);
+    });
+    if (!(button instanceof HTMLButtonElement) || button.matches(':disabled') ||
+        button.getAttribute('aria-disabled') === 'true') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    button.click();
+    return;
+  }
+
+  const url = getTweetPermalink(article, { ownOnly: true });
+  if (!url) return;
+
+  const gm = /** @type {GlobalWithGM} */ (globalThis);
+  if (typeof gm.GM_openInTab !== 'function') {
+    toast('Background tabs require GM_openInTab. Update/re-enable X Post Saver in your userscript manager and allow its tab permission.', { type: 'error' });
+    return;
+  }
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const failed = () => toast('Could not open the background tab. Check your userscript manager’s tab permission and try again.', { type: 'error' });
+  try {
+    const result = gm.GM_openInTab(url, { active: false, insert: true, setParent: true });
+    void Promise.resolve(result).then((tab) => {
+      if (tab === null || tab === false) failed();
+    }, failed);
+  } catch {
+    failed();
+  }
 }
 
 function findFirstWithinArticle(root, selector, containerArticle) {
@@ -1292,16 +1379,17 @@ function setSaveButtonState(button, { saved, url }) {
   if (saved) {
     button.classList.add('xps-saved');
     button.setAttribute('aria-label', 'Remove saved post');
-    button.title = 'Remove from local saves';
+    button.title = 'Remove from local saves (Shift+S)';
     const label = button.querySelector('.xps-save-label');
     if (label) label.textContent = 'Saved';
   } else {
     button.classList.remove('xps-saved');
     button.setAttribute('aria-label', 'Save post locally');
-    button.title = 'Save post locally';
+    button.title = 'Save post locally (Shift+S)';
     const label = button.querySelector('.xps-save-label');
     if (label) label.textContent = 'Save';
   }
+  button.setAttribute('aria-keyshortcuts', 'Shift+S');
 }
 
 function updateButtonsForUrl(url) {
@@ -1459,6 +1547,7 @@ function init() {
 
   ensureStyles();
   ensurePanel();
+  document.addEventListener('keydown', onPostShortcut, true);
 
   scheduleScan(document);
   maybeWarnStorageLimit();
