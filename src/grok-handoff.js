@@ -80,6 +80,11 @@ export async function handoffToGrok(prompt, signal, onSend = () => {}) {
   const data = new DataTransfer();
   data.setData('text/plain', prompt);
   const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
+  // Firefox ignores ClipboardEventInit.clipboardData. Keep the populated data
+  // on this event so the editor receives the same plain text in both browsers.
+  if (paste.clipboardData?.getData('text/plain') !== prompt) {
+    Object.defineProperty(paste, 'clipboardData', { value: data });
+  }
   editor.dispatchEvent(paste);
   if (!paste.defaultPrevented) throw new Error('Grok 未接受粘贴操作。');
   const insertedAt = Date.now();

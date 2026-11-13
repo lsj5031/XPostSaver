@@ -69,7 +69,14 @@ beforeEach(() => {
 });
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it('navigates once, preserves exact multiline paste, and sends once in verified Auto mode', async () => {
+it.each([false, true])('navigates once, preserves multiline paste, and sends once (constructor drops clipboard data: %s)', async (dropsClipboardData) => {
+  if (dropsClipboardData) {
+    // Firefox ignores ClipboardEventInit.clipboardData and exposes empty data.
+    class FirefoxClipboardEvent extends Event {
+      get clipboardData() { return new TestDataTransfer(); }
+    }
+    vi.stubGlobal('ClipboardEvent', FirefoxClipboardEvent);
+  }
   history.replaceState(null, '', '/person/status/123');
   const nav = document.createElement('a'); nav.href = '/i/grok';
   const navigate = vi.fn((event) => {

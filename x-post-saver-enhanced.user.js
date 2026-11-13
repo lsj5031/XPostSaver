@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.3
+// @version      0.5.4
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -316,6 +316,9 @@
     const data = new DataTransfer();
     data.setData("text/plain", prompt);
     const paste = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data });
+    if (paste.clipboardData?.getData("text/plain") !== prompt) {
+      Object.defineProperty(paste, "clipboardData", { value: data });
+    }
     editor.dispatchEvent(paste);
     if (!paste.defaultPrevented) throw new Error("Grok \u672A\u63A5\u53D7\u7C98\u8D34\u64CD\u4F5C\u3002");
     const insertedAt = Date.now();

@@ -25,6 +25,8 @@ X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI 
 
 ### Per-post Grok Auto Fact-check (v0.5.1)
 
+Firefox paste compatibility was fixed in v0.5.4: Firefox ignores the synthetic paste constructor’s `clipboardData` option, so the script supplies the populated data on that event when needed. This uses one paste event and does not access the system clipboard. Verified with local Firefox and Chromium composer fixtures; live X integration remains unverified.
+
 - Click **核查** beside Save, including the top action bar of a longform article, to **automatically send that selected post to Grok in Auto mode**. This is a manual action per post; no background checks run.
 - Uses the currently loaded post text, source URL, and one level of quoted context to prepare a Chinese fact-check prompt. It does not expand Show more, fetch missing threads/media, or save/unsave the post.
 - Opens X's native **Grok** navigation in the same tab, fills an empty composer, selects and verifies **Auto**, and finds the nearest ancestor containing exactly one editor, mode button, and Send button, and clicks its unique visible, enabled native **Send** button once. It rechecks cancellation, navigation, the composer, exact prompt, mode, and Send control immediately before clicking. There is no retry, queue, xAI API, or private endpoint access.
