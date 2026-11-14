@@ -806,12 +806,15 @@ function getFocusedShortcutPost(event) {
 /** @param {KeyboardEvent} event */
 function onPostShortcut(event) {
   const key = event.key.toLowerCase();
-  if (!['x', 'v', 'c'].includes(key) || event.shiftKey || event.ctrlKey || event.metaKey ||
+  // X owns x (Block). Keep background opening on Shift+Enter until a free
+  // single key is verified against X's live shortcut menu.
+  const background = key === 'enter' && event.shiftKey;
+  if ((!background && (!['v', 'c'].includes(key) || event.shiftKey)) || event.ctrlKey || event.metaKey ||
       event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
   const article = getFocusedShortcutPost(event);
   if (!article) return;
 
-  if (key !== 'x') {
+  if (!background) {
     const selector = key === 'v' ? 'button.xps-save-btn' : 'button.xps-fact-btn';
     const button = Array.from(article.querySelectorAll(selector)).find((candidate) => {
       if (isInsideEmbeddedTweet(candidate)) return false;
