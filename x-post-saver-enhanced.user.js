@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.7
+// @version      0.5.8
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1401,6 +1401,20 @@
     return article;
   }
   __name(getFocusedShortcutPost, "getFocusedShortcutPost");
+  function onPageScrollShortcut(event) {
+    if (event.key !== " " || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+    const controls2 = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, dialog, [role="dialog"], [role="alertdialog"]';
+    if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls2)) || document.querySelector('dialog[open], [aria-modal="true"]')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.repeat) return;
+    window.scrollBy({
+      top: window.innerHeight * (event.shiftKey ? -1 : 1),
+      left: 0,
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth"
+    });
+  }
+  __name(onPageScrollShortcut, "onPageScrollShortcut");
   function onPostShortcut(event) {
     const key = event.key.toLowerCase();
     const background = key === "w";
@@ -2002,6 +2016,7 @@ ${longform}`;
     if (window.self !== window.top) return;
     ensureStyles();
     ensurePanel();
+    document.addEventListener("keydown", onPageScrollShortcut, true);
     document.addEventListener("keydown", onPostShortcut, true);
     scheduleScan(document);
     maybeWarnStorageLimit();

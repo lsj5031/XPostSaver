@@ -37,6 +37,57 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     return { document, key, open: window.GM_openInTab, storage };
   }
 
+  it('pages smoothly after a button click, supports reverse paging, and consumes held Space', () => {
+    const { document, key } = setup(post('123', bar));
+    window.scrollBy = vi.fn();
+    const button = document.querySelector('button');
+    const clicked = vi.fn();
+    button.addEventListener('click', clicked);
+    button.focus();
+    button.click();
+    const native = vi.fn();
+    button.addEventListener('keydown', native);
+    expect(key({ key: ' ' }).defaultPrevented).toBe(true);
+    expect(window.scrollBy).toHaveBeenLastCalledWith({ top: window.innerHeight, left: 0, behavior: 'smooth' });
+    expect(key({ key: ' ', repeat: true }).defaultPrevented).toBe(true);
+    expect(window.scrollBy).toHaveBeenCalledTimes(1);
+    key({ key: ' ', shiftKey: true });
+    expect(window.scrollBy).toHaveBeenLastCalledWith({ top: -window.innerHeight, left: 0, behavior: 'smooth' });
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(native).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('pages without a focused post and respects reduced motion', () => {
+    const { key } = setup('<main>Timeline</main>');
+    window.scrollBy = vi.fn();
+    window.matchMedia = vi.fn(() => ({ matches: true }));
+    expect(key({ key: ' ' }).defaultPrevented).toBe(true);
+    expect(window.scrollBy).toHaveBeenCalledWith({ top: window.innerHeight, left: 0, behavior: 'instant' });
+  });
+
+  it.each([
+    '<input>', '<textarea></textarea>', '<select><option>Choice</option></select>',
+    '<div contenteditable="true"><span tabindex="0">Draft</span></div>',
+    '<div role="textbox"><span tabindex="0">Draft</span></div>',
+    '<div role="slider" tabindex="0"></div>', '<video tabindex="0"></video>',
+    '<div role="dialog"><button>Dialog</button></div>',
+    '<dialog open><button>Dialog</button></dialog>',
+  ])('preserves Space inside typing, media, and dialog controls: %s', (content) => {
+    const { document, key } = setup(content);
+    window.scrollBy = vi.fn();
+    document.querySelector('input, textarea, select, span, [tabindex], button').focus();
+    expect(key({ key: ' ' }).defaultPrevented).toBe(false);
+    expect(window.scrollBy).not.toHaveBeenCalled();
+  });
+
+  it.each([{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { isComposing: true }, { keyCode: 229 }])('preserves modified/composing Space: %j', (options) => {
+    const { key } = setup();
+    window.scrollBy = vi.fn();
+    expect(key({ key: ' ', ...options }).defaultPrevented).toBe(false);
+    expect(window.scrollBy).not.toHaveBeenCalled();
+  });
+
   it('toggles the focused post through real Save clicks and persisted Saved state', async () => {
     const { document, key, storage, open } = setup(post('111', bar) + post('222', '<div data-testid="tweetText">Focused claim</div>' + bar));
     await vi.waitFor(() => expect(document.querySelectorAll('.xps-save-btn')).toHaveLength(2));

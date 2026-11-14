@@ -804,6 +804,27 @@ function getFocusedShortcutPost(event) {
 }
 
 /** @param {KeyboardEvent} event */
+function onPageScrollShortcut(event) {
+  if (event.key !== ' ' || event.ctrlKey || event.metaKey || event.altKey ||
+      event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+  // Space should page the timeline even when a clicked action retains focus.
+  // Preserve typing, media controls, and dialog keyboard interaction.
+  const controls = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, dialog, [role="dialog"], [role="alertdialog"]';
+  if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls)) ||
+      document.querySelector('dialog[open], [aria-modal="true"]')) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  // Holding Space must not repeatedly restart the smooth animation.
+  if (event.repeat) return;
+  window.scrollBy({
+    top: window.innerHeight * (event.shiftKey ? -1 : 1),
+    left: 0,
+    behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+  });
+}
+
+/** @param {KeyboardEvent} event */
 function onPostShortcut(event) {
   const key = event.key.toLowerCase();
   // Keep x available for X's native Block action.
@@ -1549,6 +1570,7 @@ function init() {
 
   ensureStyles();
   ensurePanel();
+  document.addEventListener('keydown', onPageScrollShortcut, true);
   document.addEventListener('keydown', onPostShortcut, true);
 
   scheduleScan(document);
