@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.8
+// @version      0.5.9
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1415,6 +1415,55 @@
     });
   }
   __name(onPageScrollShortcut, "onPageScrollShortcut");
+  function onPostNavigationShortcut(event) {
+    if (!["j", "k"].includes(event.key) || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+    const controls2 = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, [data-testid="videoPlayer"], [data-testid="audioPlayer"], dialog, [role="dialog"], [role="alertdialog"]';
+    if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls2)) || document.querySelector('dialog[open], [aria-modal="true"]')) return;
+    const scope = document.querySelector('[data-testid="primaryColumn"]') || document.querySelector("main") || document;
+    const timeline = scope.querySelector('[aria-label^="Timeline:"]') || scope;
+    const scopeRect = scope instanceof Element ? scope.getBoundingClientRect() : null;
+    const left = Math.max(0, scopeRect?.left ?? 0);
+    const right = Math.min(window.innerWidth, scopeRect?.right ?? window.innerWidth);
+    let top = 0;
+    for (const header of scope.querySelectorAll('header, [role="banner"], [data-testid="TopNavBar"]')) {
+      const style = window.getComputedStyle(header);
+      const rect2 = header.getBoundingClientRect();
+      if (["sticky", "fixed"].includes(style.position) && style.visibility !== "hidden" && rect2.top <= 0 && rect2.bottom > 0 && rect2.bottom < window.innerHeight && rect2.right > left && rect2.left < right) top = Math.max(top, rect2.bottom);
+    }
+    const candidates = Array.from(timeline.querySelectorAll("article")).filter((article) => {
+      if (!(article instanceof HTMLElement) || article.parentElement?.closest("article") || isArticleReadView(article) || isInsideEmbeddedTweet(article) || article.closest('aside, [data-testid="sidebarColumn"], dialog, [role="dialog"], [role="alertdialog"]') || !getTweetPermalink(article, { ownOnly: true })) return false;
+      const rect2 = article.getBoundingClientRect();
+      if (rect2.width <= 0 || rect2.height <= 0 || rect2.right <= left || rect2.left >= right) return false;
+      for (let node = (
+        /** @type {HTMLElement | null} */
+        article
+      ); node; node = node.parentElement) {
+        const style = window.getComputedStyle(node);
+        if (node.hidden || node.hasAttribute("inert") || node.getAttribute("aria-hidden") === "true" || style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.opacity === "0") return false;
+      }
+      return true;
+    });
+    const visible2 = candidates.filter((article) => {
+      const rect2 = article.getBoundingClientRect();
+      return rect2.bottom > top && rect2.top < window.innerHeight;
+    });
+    if (!visible2.length) return;
+    const focused = getFocusedShortcutPost(event);
+    const forward = event.key === "j";
+    const anchored = !!focused && visible2.includes(focused);
+    const index = focused ? candidates.indexOf(focused) : -1;
+    const target = anchored ? candidates[index + (forward ? 1 : -1)] : visible2[forward ? 0 : visible2.length - 1];
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.repeat || !target) return;
+    if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+    const rect = target.getBoundingClientRect();
+    if (rect.bottom <= top || rect.top >= window.innerHeight) {
+      window.scrollBy({ top: rect.top - top, left: 0, behavior: "instant" });
+    }
+  }
+  __name(onPostNavigationShortcut, "onPostNavigationShortcut");
   function onPostShortcut(event) {
     const key = event.key.toLowerCase();
     const background = key === "w";
@@ -2017,6 +2066,7 @@ ${longform}`;
     ensureStyles();
     ensurePanel();
     document.addEventListener("keydown", onPageScrollShortcut, true);
+    document.addEventListener("keydown", onPostNavigationShortcut, true);
     document.addEventListener("keydown", onPostShortcut, true);
     scheduleScan(document);
     maybeWarnStorageLimit();

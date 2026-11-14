@@ -825,6 +825,70 @@ function onPageScrollShortcut(event) {
 }
 
 /** @param {KeyboardEvent} event */
+function onPostNavigationShortcut(event) {
+  if (!['j', 'k'].includes(event.key) || event.shiftKey || event.ctrlKey || event.metaKey ||
+      event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+  const controls = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, [data-testid="videoPlayer"], [data-testid="audioPlayer"], dialog, [role="dialog"], [role="alertdialog"]';
+  if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls)) ||
+      document.querySelector('dialog[open], [aria-modal="true"]')) return;
+
+  const scope = document.querySelector('[data-testid="primaryColumn"]') || document.querySelector('main') || document;
+  // Prefer the primary timeline when the page exposes its region explicitly.
+  const timeline = scope.querySelector('[aria-label^="Timeline:"]') || scope;
+  const scopeRect = scope instanceof Element ? scope.getBoundingClientRect() : null;
+  const left = Math.max(0, scopeRect?.left ?? 0);
+  const right = Math.min(window.innerWidth, scopeRect?.right ?? window.innerWidth);
+  let top = 0;
+  // X's primary-column header can remain sticky above the posts.
+  for (const header of scope.querySelectorAll('header, [role="banner"], [data-testid="TopNavBar"]')) {
+    const style = window.getComputedStyle(header);
+    const rect = header.getBoundingClientRect();
+    if (['sticky', 'fixed'].includes(style.position) && style.visibility !== 'hidden' &&
+        rect.top <= 0 && rect.bottom > 0 && rect.bottom < window.innerHeight &&
+        rect.right > left && rect.left < right) top = Math.max(top, rect.bottom);
+  }
+  const candidates = Array.from(timeline.querySelectorAll('article')).filter((article) => {
+    if (!(article instanceof HTMLElement) || article.parentElement?.closest('article') ||
+        isArticleReadView(article) || isInsideEmbeddedTweet(article) ||
+        article.closest('aside, [data-testid="sidebarColumn"], dialog, [role="dialog"], [role="alertdialog"]') ||
+        !getTweetPermalink(article, { ownOnly: true })) return false;
+    const rect = article.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || rect.right <= left || rect.left >= right) return false;
+    for (let node = /** @type {HTMLElement | null} */ (article); node; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (node.hidden || node.hasAttribute('inert') || node.getAttribute('aria-hidden') === 'true' ||
+          style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' ||
+          style.opacity === '0') return false;
+    }
+    return true;
+  });
+  const visible = candidates.filter((article) => {
+    const rect = article.getBoundingClientRect();
+    return rect.bottom > top && rect.top < window.innerHeight;
+  });
+  if (!visible.length) return;
+
+  const focused = getFocusedShortcutPost(event);
+  const forward = event.key === 'j';
+  const anchored = !!focused && visible.includes(focused);
+  const index = focused ? candidates.indexOf(focused) : -1;
+  const target = anchored ? candidates[index + (forward ? 1 : -1)] :
+    visible[forward ? 0 : visible.length - 1];
+  // Own boundaries too: native X may still retain a different, stale selection.
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  // Holding a key must not race virtualization or restart scrolling.
+  if (event.repeat || !target) return;
+  if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
+  target.focus({ preventScroll: true });
+  const rect = target.getBoundingClientRect();
+  // A partly visible (including very tall) post is already a useful anchor.
+  if (rect.bottom <= top || rect.top >= window.innerHeight) {
+    window.scrollBy({ top: rect.top - top, left: 0, behavior: 'instant' });
+  }
+}
+
+/** @param {KeyboardEvent} event */
 function onPostShortcut(event) {
   const key = event.key.toLowerCase();
   // Keep x available for X's native Block action.
@@ -1571,6 +1635,7 @@ function init() {
   ensureStyles();
   ensurePanel();
   document.addEventListener('keydown', onPageScrollShortcut, true);
+  document.addEventListener('keydown', onPostNavigationShortcut, true);
   document.addEventListener('keydown', onPostShortcut, true);
 
   scheduleScan(document);

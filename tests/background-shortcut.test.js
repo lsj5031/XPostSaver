@@ -66,6 +66,160 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     expect(window.scrollBy).toHaveBeenCalledWith({ top: window.innerHeight, left: 0, behavior: 'instant' });
   });
 
+  function navigation(content = post('111', bar) + post('222', bar) + post('333', bar)) {
+    const harness = setup(`<main data-testid="primaryColumn"><header style="position:sticky"></header>${content}</main>`);
+    const rect = (top, bottom, left = 0, right = 600) => ({
+      top, bottom, left, right, width: right - left, height: bottom - top,
+    });
+    const { document } = harness;
+    document.querySelector('main').getBoundingClientRect = () => rect(0, 768);
+    document.querySelector('header').getBoundingClientRect = () => rect(0, 80);
+    const articles = [...document.querySelectorAll('article')];
+    const bounds = articles.map((_, i) => rect(i * 240 + 80, i * 240 + 320));
+    articles.forEach((article, i) => { article.getBoundingClientRect = () => bounds[i]; });
+    window.scrollBy = vi.fn();
+    return { ...harness, articles, bounds, rect };
+  }
+
+  it.each(['manual', 'Space'])('reanchors stale upper focus after %s scrolling, then traverses both ways', (scroll) => {
+    const { document, key, articles, bounds, rect } = navigation();
+    articles[0].focus();
+    if (scroll === 'Space') key({ key: ' ' });
+    bounds[0] = rect(-300, 80); // Entirely behind the sticky header.
+    bounds[1] = rect(80, 320);
+    bounds[2] = rect(320, 560);
+    const native = vi.fn();
+    document.addEventListener('keydown', native);
+    window.scrollBy.mockClear();
+    expect(key({ key: 'j' }).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(articles[1]);
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[2]);
+    key({ key: 'k' });
+    expect(document.activeElement).toBe(articles[1]);
+    articles[0].focus({ preventScroll: true });
+    key({ key: 'k' });
+    expect(document.activeElement).toBe(articles[2]);
+    expect(window.scrollBy).not.toHaveBeenCalled();
+    expect(native).not.toHaveBeenCalled();
+  });
+
+  it('accepts tall intersecting posts, reveals offscreen successors, and owns boundaries/repeats', () => {
+    const { document, key, articles, bounds, rect } = navigation();
+    bounds[0] = rect(-600, 1000);
+    bounds[1] = rect(1000, 1240);
+    bounds[2] = rect(1240, 1480);
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[0]);
+    expect(key({ key: 'k' }).defaultPrevented).toBe(true);
+    expect(key({ key: 'j', repeat: true }).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(articles[0]);
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[1]);
+    expect(window.scrollBy).toHaveBeenLastCalledWith({ top: 920, left: 0, behavior: 'instant' });
+    bounds[1] = rect(80, 320);
+    bounds[2] = rect(320, 560);
+    key({ key: 'j' });
+    expect(key({ key: 'j' }).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(articles[2]);
+  });
+
+  it('derives fresh nodes, excludes quotes/read views, hidden and horizontal/sidebar/other timelines', () => {
+    const { document, key, articles, bounds, rect } = navigation();
+    articles[0].insertAdjacentHTML('beforeend', `<div data-testid="embeddedTweet">${post('999')}</div><article data-testid="twitterArticleReadView" tabindex="0"></article>`);
+    document.querySelector('main').insertAdjacentHTML('beforeend', `<aside>${post('888')}</aside>`);
+    document.querySelectorAll('article article, aside article').forEach((article) => {
+      article.getBoundingClientRect = () => rect(80, 320);
+    });
+    bounds[0] = rect(-300, -60);
+    bounds[1] = rect(80, 320, 1200, 1800);
+    articles[2].hidden = true;
+    expect(key({ key: 'j' }).defaultPrevented).toBe(false);
+    articles[2].hidden = false;
+    articles[0].focus();
+    articles[0].remove();
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[2]);
+    const replacement = articles[2].cloneNode(true);
+    replacement.removeAttribute('tabindex');
+    replacement.getBoundingClientRect = () => rect(80, 320);
+    articles[2].replaceWith(replacement);
+    key({ key: 'k' });
+    expect(document.activeElement).toBe(replacement);
+    expect(replacement.tabIndex).toBe(-1);
+    replacement.querySelector('a').remove();
+    expect(key({ key: 'j' }).defaultPrevented).toBe(false);
+  });
+
+  it('limits navigation to the identifiable primary timeline region', () => {
+    const { document, key, articles } = navigation();
+    const region = document.createElement('section');
+    region.setAttribute('aria-label', 'Timeline: Home');
+    articles[1].before(region);
+    region.append(articles[1]);
+    document.body.insertAdjacentHTML('beforeend', `<div data-testid="sidebarColumn">${post('999')}</div>`);
+    document.querySelector('[data-testid="sidebarColumn"] article').getBoundingClientRect = articles[1].getBoundingClientRect;
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[1]);
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[1]);
+  });
+
+  it.each([
+    { shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true },
+    { isComposing: true }, { keyCode: 229 }, { key: 'J' }, { key: 'x' },
+  ])('preserves native navigation combinations/composition: %j', (options) => {
+    const { document, key } = navigation();
+    const focused = document.activeElement;
+    expect(key({ key: 'j', ...options }).defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(focused);
+  });
+
+  it.each([
+    '<input>', '<textarea></textarea>', '<select><option>Choice</option></select>',
+    '<div contenteditable=""><span tabindex="0">Draft</span></div>',
+    '<div role="textbox"><span tabindex="0">Draft</span></div>',
+    '<div role="slider" tabindex="0"></div>', '<video tabindex="0"></video>', '<audio tabindex="0"></audio>',
+    '<div data-testid="videoPlayer"><button>Play</button></div>',
+    '<div role="dialog"><button>Dialog</button></div>',
+  ])('preserves j/k in editors/dialog/media descendants: %s', (content) => {
+    const { document, key, articles } = navigation(post('111', content));
+    const control = articles[0].querySelector('input, textarea, select, span, [tabindex], button');
+    control.focus();
+    for (const letter of ['j', 'k']) expect(key({ key: letter }).defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(control);
+  });
+
+  it('leaves empty targets, pre-cancelled events and open modal interaction untouched', () => {
+    const { document, key, articles } = navigation();
+    const event = new window.KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true });
+    event.preventDefault();
+    document.body.dispatchEvent(event);
+    expect(document.activeElement).toBe(document.body);
+    document.body.insertAdjacentHTML('beforeend', '<dialog open>Modal</dialog>');
+    expect(key({ key: 'j' }).defaultPrevented).toBe(false);
+    document.querySelector('dialog').remove();
+    articles.forEach((article) => article.remove());
+    expect(key({ key: 'k' }).defaultPrevented).toBe(false);
+    expect(key({ key: 'j', repeat: true }).defaultPrevented).toBe(false);
+  });
+
+  it('j focuses the real article for w/v/c, using actual Save and local check fallback', async () => {
+    const { document, key, articles, bounds, rect, open, storage } = navigation();
+    await vi.waitFor(() => expect(document.querySelectorAll('.xps-fact-btn')).toHaveLength(3));
+    articles[0].focus();
+    bounds[0] = rect(-400, -100);
+    key({ key: 'j' });
+    expect(document.activeElement).toBe(articles[1]);
+    key({ key: 'w' });
+    expect(open).toHaveBeenCalledWith('https://x.com/person/status/222', expect.any(Object));
+    key({ key: 'v' });
+    await vi.waitFor(() => expect(JSON.parse(storage.get('xSavedPosts'))).toMatchObject([{ id: '222' }]));
+    key({ key: 'c' });
+    await vi.waitFor(() => expect(document.querySelector('dialog textarea')?.value).toContain('https://x.com/person/status/222'));
+    expect(window.fetch).not.toHaveBeenCalled();
+  });
+
   it.each([
     '<input>', '<textarea></textarea>', '<select><option>Choice</option></select>',
     '<div contenteditable="true"><span tabindex="0">Draft</span></div>',

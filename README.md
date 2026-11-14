@@ -20,7 +20,8 @@ X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI 
 - Supports save and unsave in place.
 - Uses post-key dedupe (post `id` first, URL normalization fallback) to prevent duplicates.
 - Scans dynamic timeline updates with `MutationObserver` and incremental rescans.
-- Use X’s **j/k** navigation to focus a post, then **w** to open it in a new background tab (**x** remains X’s native Block action), **v** to toggle Save/Saved, or **c** to run 核查, which **automatically sends the post’s fact-check prompt to Grok Auto**. Save and fact-check use the existing enabled buttons, including the longform top bar. Focus must be on the post, a descendant, or its single-post timeline cell; hovering alone does not select a post. Editors, unrelated dialogs, repeated/composing keys, extra modifier keys, and absent/disabled action buttons are ignored. All three shortcuts require no modifiers. Native **x**, Enter, and Shift+Enter pass through to X. **Space** smoothly scrolls down one viewport even after clicking a button; **Shift+Space** scrolls up. Holding Space does not restart the animation. Typing fields, dialogs, and media controls keep their normal Space behavior, and reduced-motion preferences are respected.
+- Use userscript-owned unmodified **j/k** navigation (next/previous) to focus a post, then **w** to open it in a new background tab (**x** remains X’s native Block action), **v** to toggle Save/Saved, or **c** to run 核查, which **automatically sends the post’s fact-check prompt to Grok Auto**. Save and fact-check use the existing enabled buttons, including the longform top bar. Focus must be on the post, a descendant, or its single-post timeline cell; hovering alone does not select a post. Editors, unrelated dialogs, repeated/composing keys, extra modifier keys, and absent/disabled action buttons are ignored. All three shortcuts require no modifiers. Native **x**, Enter, and Shift+Enter pass through to X. **Space** smoothly scrolls down one viewport even after clicking a button; **Shift+Space** scrolls up. Holding Space does not restart the animation. Typing fields, dialogs, and media controls keep their normal Space behavior, and reduced-motion preferences are respected.
+- **j/k** move from the actually focused post only while it intersects the usable timeline viewport. After manual scrolling or Space leaves focus offscreen, **j** anchors to the first visible post and **k** to the last, rather than jumping back to a stale selection. Tall intersecting posts count as visible; nested quotes/read views are not separate targets. Navigation uses the primary timeline when identifiable, accounts for its sticky header, focuses the real article without incidental scrolling, and reveals an offscreen next/previous target deliberately. Held repeats are consumed without traversal; boundaries with visible posts are consumed to prevent native stale-selection jumps. With no visible actionable posts, the key passes through. Editors, dialogs, media controls, modifiers (including Shift), and composition keep native behavior. This is a viewport-aware userscript policy, not a claim about X internals: [X documents j/k as next/previous](https://help.x.com/en/using-x/how-to-post), without promising viewport reanchoring.
 - Background opening requires your userscript manager’s `GM_openInTab` API and grant. Missing permissions or opening failures show an error, with no focus-stealing `window.open` fallback. Shortcuts are covered by DOM fixtures and bundle tests, not verified against live X; tests use the local fallback when Grok is absent and do not send network requests.
 
 ### Per-post Grok Auto Fact-check (v0.5.1)
@@ -208,6 +209,20 @@ python3 -m venv .fonttools-venv
 ```bash
 npm test
 ```
+
+- Optional real Chromium shortcut fixture (no live X access or external requests):
+
+```bash
+XPS_PLAYWRIGHT="/absolute/path/to/playwright-core/index.js" \
+XPS_CHROMIUM="/absolute/path/to/chromium" \
+node scripts/check-navigation-browser.js
+```
+
+  Requires `XPS_PLAYWRIGHT` (absolute module path) and `XPS_CHROMIUM` (absolute
+  executable path) for locally installed tools; no dependencies are added.
+  Replace the placeholders above with your local paths. `XPS_EVIDENCE` sets the output directory
+  (default `/tmp/xps-jk-evidence`) for ordered screenshots, trace, and measurements.
+  Its stale native-navigation handler is an explicit simulation, not verified X internals.
 
 ### Rust CLI
 
