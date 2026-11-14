@@ -10,8 +10,7 @@ afterEach(() => window?.close());
 const post = (id = '123', content = '') => `<article tabindex="0"><a href="/person/status/${id}?s=20"><time></time></a>${content}</article>`;
 const bar = '<div role="group"><button data-testid="reply"></button><button data-testid="like"></button></div>';
 const shortcuts = [
-  { key: 'Enter', shiftKey: true },
-  ...['v', 'V', 'c', 'C'].map((key) => ({ key, shiftKey: false })),
+  ...['w', 'W', 'v', 'V', 'c', 'C'].map((key) => ({ key, shiftKey: false })),
 ];
 
 describe.each([['source', source], ['generated userscript', bundle]])('%s background shortcut', (_name, code) => {
@@ -31,7 +30,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     window.eval(code);
     const document = window.document;
     const key = (options = {}) => {
-      const event = new window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: options.key === undefined || options.key === 'Enter', bubbles: true, cancelable: true, ...options });
+      const event = new window.KeyboardEvent('keydown', { key: 'w', shiftKey: false, bubbles: true, cancelable: true, ...options });
       document.activeElement.dispatchEvent(event);
       return event;
     };
@@ -183,7 +182,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     { shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true },
     { isComposing: true }, { keyCode: 229 }, { repeat: true }, { key: 'Process' },
     { key: 'j' }, { key: 'k' }, { key: 'Escape' },
-    { key: 'Enter', shiftKey: false }, { key: 'x' }, { key: 'X' }, { key: 's' }, { key: 'f' }, { key: 'o' }, { key: 'b' }, { key: '/' }, { key: '?' },
+    { key: 'Enter', shiftKey: false }, { key: 'Enter', shiftKey: true }, { key: 'x' }, { key: 'X' }, { key: 's' }, { key: 'f' }, { key: 'o' }, { key: 'b' }, { key: '/' }, { key: '?' },
   ])('leaves other keys/modifiers untouched for all shortcuts: %j', async (options) => {
     const { document, key, open } = setup(post('123', bar));
     await vi.waitFor(() => expect(document.querySelector('.xps-fact-btn')).not.toBeNull());
@@ -191,8 +190,6 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     document.querySelectorAll('.xps-save-btn, .xps-fact-btn').forEach((button) => button.addEventListener('click', clicked));
     document.querySelector('article').focus();
     for (const shortcut of shortcuts) {
-      // Shift is required for background opening, but rejected for v/c.
-      if (shortcut.shiftKey && options.shiftKey === true) continue;
       expect(key({ ...shortcut, ...options }).defaultPrevented).toBe(false);
     }
     expect(clicked).not.toHaveBeenCalled();

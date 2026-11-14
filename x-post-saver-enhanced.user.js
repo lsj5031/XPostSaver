@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.6
+// @version      0.5.7
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1403,8 +1403,8 @@
   __name(getFocusedShortcutPost, "getFocusedShortcutPost");
   function onPostShortcut(event) {
     const key = event.key.toLowerCase();
-    const background = key === "enter" && event.shiftKey;
-    if (!background && (!["v", "c"].includes(key) || event.shiftKey) || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
+    const background = key === "w";
+    if (!["w", "v", "c"].includes(key) || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
     const article = getFocusedShortcutPost(event);
     if (!article) return;
     if (!background) {

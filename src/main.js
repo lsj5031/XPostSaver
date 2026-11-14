@@ -806,10 +806,9 @@ function getFocusedShortcutPost(event) {
 /** @param {KeyboardEvent} event */
 function onPostShortcut(event) {
   const key = event.key.toLowerCase();
-  // X owns x (Block). Keep background opening on Shift+Enter until a free
-  // single key is verified against X's live shortcut menu.
-  const background = key === 'enter' && event.shiftKey;
-  if ((!background && (!['v', 'c'].includes(key) || event.shiftKey)) || event.ctrlKey || event.metaKey ||
+  // Keep x available for X's native Block action.
+  const background = key === 'w';
+  if (!['w', 'v', 'c'].includes(key) || event.shiftKey || event.ctrlKey || event.metaKey ||
       event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
   const article = getFocusedShortcutPost(event);
   if (!article) return;
