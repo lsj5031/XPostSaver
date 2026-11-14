@@ -9,7 +9,7 @@ let window;
 afterEach(() => window?.close());
 const post = (id = '123', content = '') => `<article tabindex="0"><a href="/person/status/${id}?s=20"><time></time></a>${content}</article>`;
 const bar = '<div role="group"><button data-testid="reply"></button><button data-testid="like"></button></div>';
-const shortcuts = ['Enter', 's', 'S', 'f', 'F'];
+const shortcuts = ['x', 'X', 'v', 'V', 'c', 'C'];
 
 describe.each([['source', source], ['generated userscript', bundle]])('%s background shortcut', (_name, code) => {
   function setup(content = post()) {
@@ -28,7 +28,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     window.eval(code);
     const document = window.document;
     const key = (options = {}) => {
-      const event = new window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true, ...options });
+      const event = new window.KeyboardEvent('keydown', { key: 'x', shiftKey: false, bubbles: true, cancelable: true, ...options });
       document.activeElement.dispatchEvent(event);
       return event;
     };
@@ -46,14 +46,14 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     article.addEventListener('keydown', native);
     article.focus();
     expect(button.title).toContain('Save post locally');
-    expect(button.title).toContain('Shift+S');
-    expect(button.getAttribute('aria-keyshortcuts')).toBe('Shift+S');
-    expect(key({ key: 's' }).defaultPrevented).toBe(true);
+    expect(button.title).toContain('v');
+    expect(button.getAttribute('aria-keyshortcuts')).toBe('v');
+    expect(key({ key: 'v' }).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(JSON.parse(storage.get('xSavedPosts'))).toMatchObject([{ id: '222', text: 'Focused claim' }]));
     expect(button.textContent).toBe('Saved');
     expect(button.title).toContain('Remove from local saves');
-    expect(button.title).toContain('Shift+S');
-    expect(key({ key: 'S' }).defaultPrevented).toBe(true);
+    expect(button.title).toContain('v');
+    expect(key({ key: 'V' }).defaultPrevented).toBe(true);
     await vi.waitFor(() => expect(JSON.parse(storage.get('xSavedPosts'))).toEqual([]));
     expect(button.textContent).toBe('Save');
     expect(clicked).toHaveBeenCalledTimes(2);
@@ -61,15 +61,15 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     expect(open).not.toHaveBeenCalled();
   });
 
-  it.each(['f', 'F'])('checks the focused outer post via the existing local Grok fallback: %s', async (letter) => {
+  it.each(['c', 'C'])('checks the focused outer post via the existing local Grok fallback: %s', async (letter) => {
     const quote = '<div data-testid="embeddedTweet">' + post('999', '<div data-testid="tweetText">Quoted evidence</div><button>Quote focus</button>' + bar) + '</div>';
     const { document, key, storage } = setup(post('111', '<div data-testid="tweetText">Unfocused claim</div>' + bar) +
       post('222', '<div data-testid="tweetText">Focused claim</div>' + quote + bar));
     await vi.waitFor(() => expect(document.querySelectorAll('.xps-fact-btn')).toHaveLength(2));
     const button = document.querySelectorAll('.xps-fact-btn')[1];
     expect(button.title).toContain('自动');
-    expect(button.title).toContain('Shift+F');
-    expect(button.getAttribute('aria-keyshortcuts')).toBe('Shift+F');
+    expect(button.title).toContain('c');
+    expect(button.getAttribute('aria-keyshortcuts')).toBe('c');
     const clicked = vi.fn();
     button.addEventListener('click', clicked);
     document.querySelector('[data-testid="embeddedTweet"] button').focus();
@@ -88,11 +88,11 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     expect(document.querySelector('dialog')).toBeNull();
   });
 
-  it.each(['s', 'f'])('uses the longform top-bar button, never a quoted button: %s', async (letter) => {
+  it.each(['v', 'c'])('uses the longform top-bar button, never a quoted button: %s', async (letter) => {
     const { document, key } = setup(post('123', '<div data-testid="embeddedTweet">' + post('999', bar) +
       '</div><article data-testid="twitterArticleReadView" tabindex="0"><a href="/person/status/123"></a><h1>Longform</h1>' + bar + '</article>'));
     await vi.waitFor(() => expect(document.querySelector('.xps-fact-btn')).not.toBeNull());
-    const selector = letter === 's' ? '.xps-save-btn' : '.xps-fact-btn';
+    const selector = letter === 'v' ? '.xps-save-btn' : '.xps-fact-btn';
     const top = document.querySelector('[data-testid="twitterArticleReadView"]');
     const clicked = vi.fn();
     top.querySelector(selector).addEventListener('click', clicked);
@@ -107,10 +107,10 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     expect(quoteClick).not.toHaveBeenCalled();
   });
 
-  it.each(['s', 'f'])('does not capture missing, disabled, or quote-only actions: %s', async (letter) => {
+  it.each(['v', 'c'])('does not capture missing, disabled, or quote-only actions: %s', async (letter) => {
     const { document, key } = setup(post('123', bar));
     await vi.waitFor(() => expect(document.querySelector('.xps-fact-btn')).not.toBeNull());
-    const button = document.querySelector(letter === 's' ? '.xps-save-btn' : '.xps-fact-btn');
+    const button = document.querySelector(letter === 'v' ? '.xps-save-btn' : '.xps-fact-btn');
     const clicked = vi.fn();
     button.addEventListener('click', clicked);
     document.querySelector('article').focus();
@@ -177,9 +177,10 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
   });
 
   it.each([
-    { shiftKey: false }, { ctrlKey: true }, { metaKey: true }, { altKey: true },
+    { shiftKey: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true },
     { isComposing: true }, { keyCode: 229 }, { repeat: true }, { key: 'Process' },
     { key: 'j' }, { key: 'k' }, { key: 'Escape' },
+    { key: 'Enter' }, { key: 's' }, { key: 'f' }, { key: 'o' }, { key: 'b' }, { key: '/' }, { key: '?' },
   ])('leaves other keys/modifiers untouched for all shortcuts: %j', async (options) => {
     const { document, key, open } = setup(post('123', bar));
     await vi.waitFor(() => expect(document.querySelector('.xps-fact-btn')).not.toBeNull());
@@ -238,7 +239,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     else expect(open).not.toHaveBeenCalled();
   });
 
-  it('shows a useful missing-API error without intercepting native Enter', () => {
+  it('shows a useful missing-API error without intercepting the key when unavailable', () => {
     const { document, key, open } = setup();
     delete window.GM_openInTab;
     document.querySelector('article').focus();

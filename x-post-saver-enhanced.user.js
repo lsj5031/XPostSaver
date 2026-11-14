@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.4
+// @version      0.5.5
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -545,7 +545,7 @@
       if (!article || !url) return;
       if (attempted.has(url)) {
         button.disabled = true;
-        button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (Shift+F)";
+        button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (c)";
         return;
       }
       active = true;
@@ -598,7 +598,7 @@
         }
       } finally {
         button.disabled = sendAttempted && getUrl(article) === url;
-        if (button.disabled) button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (Shift+F)";
+        if (button.disabled) button.title = "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (c)";
         button.textContent = oldLabel;
       }
     }
@@ -611,7 +611,7 @@
       if (existing instanceof HTMLButtonElement) {
         if (!active) {
           existing.disabled = attempted.has(getUrl(article));
-          existing.title = existing.disabled ? "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (Shift+F)" : "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto (Shift+F)";
+          existing.title = existing.disabled ? "\u672C\u6B21\u9875\u9762\u4F1A\u8BDD\u5DF2\u5C1D\u8BD5\u53D1\u9001\u6B64\u5E16\uFF0C\u8BF7\u5728 Grok \u4E2D\u68C0\u67E5\uFF0C\u52FF\u91CD\u590D\u53D1\u9001\u3002 (c)" : "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto (c)";
         }
         return;
       }
@@ -622,8 +622,8 @@
       });
       button.className = "xps-fact-btn";
       button.setAttribute("aria-label", "\u6838\u67E5\u5F53\u524D\u5E16\u5B50\uFF08\u81EA\u52A8\u53D1\u9001\u5230 Grok Auto\uFF09");
-      button.setAttribute("aria-keyshortcuts", "Shift+F");
-      button.title = "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto (Shift+F)";
+      button.setAttribute("aria-keyshortcuts", "c");
+      button.title = "\u70B9\u51FB\u540E\u81EA\u52A8\u5C06\u5F53\u524D\u5E16\u5B50\u7684\u4E2D\u6587\u6838\u67E5\u63D0\u793A\u8BCD\u53D1\u9001\u5230 Grok Auto (c)";
       actionBar.append(button);
     }
     __name(ensureButton, "ensureButton");
@@ -1403,11 +1403,11 @@
   __name(getFocusedShortcutPost, "getFocusedShortcutPost");
   function onPostShortcut(event) {
     const key = event.key.toLowerCase();
-    if (!["enter", "s", "f"].includes(key) || !event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
+    if (!["x", "v", "c"].includes(key) || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
     const article = getFocusedShortcutPost(event);
     if (!article) return;
-    if (key !== "enter") {
-      const selector = key === "s" ? "button.xps-save-btn" : "button.xps-fact-btn";
+    if (key !== "x") {
+      const selector = key === "v" ? "button.xps-save-btn" : "button.xps-fact-btn";
       const button = Array.from(article.querySelectorAll(selector)).find((candidate) => {
         if (isInsideEmbeddedTweet(candidate)) return false;
         const owner = candidate.closest("article");
@@ -1853,17 +1853,17 @@ ${longform}`;
     if (saved) {
       button.classList.add("xps-saved");
       button.setAttribute("aria-label", "Remove saved post");
-      button.title = "Remove from local saves (Shift+S)";
+      button.title = "Remove from local saves (v)";
       const label = button.querySelector(".xps-save-label");
       if (label) label.textContent = "Saved";
     } else {
       button.classList.remove("xps-saved");
       button.setAttribute("aria-label", "Save post locally");
-      button.title = "Save post locally (Shift+S)";
+      button.title = "Save post locally (v)";
       const label = button.querySelector(".xps-save-label");
       if (label) label.textContent = "Save";
     }
-    button.setAttribute("aria-keyshortcuts", "Shift+S");
+    button.setAttribute("aria-keyshortcuts", "v");
   }
   __name(setSaveButtonState, "setSaveButtonState");
   function updateButtonsForUrl(url) {

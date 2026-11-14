@@ -806,13 +806,13 @@ function getFocusedShortcutPost(event) {
 /** @param {KeyboardEvent} event */
 function onPostShortcut(event) {
   const key = event.key.toLowerCase();
-  if (!['enter', 's', 'f'].includes(key) || !event.shiftKey || event.ctrlKey || event.metaKey ||
+  if (!['x', 'v', 'c'].includes(key) || event.shiftKey || event.ctrlKey || event.metaKey ||
       event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
   const article = getFocusedShortcutPost(event);
   if (!article) return;
 
-  if (key !== 'enter') {
-    const selector = key === 's' ? 'button.xps-save-btn' : 'button.xps-fact-btn';
+  if (key !== 'x') {
+    const selector = key === 'v' ? 'button.xps-save-btn' : 'button.xps-fact-btn';
     const button = Array.from(article.querySelectorAll(selector)).find((candidate) => {
       if (isInsideEmbeddedTweet(candidate)) return false;
       const owner = candidate.closest('article');
@@ -1379,17 +1379,17 @@ function setSaveButtonState(button, { saved, url }) {
   if (saved) {
     button.classList.add('xps-saved');
     button.setAttribute('aria-label', 'Remove saved post');
-    button.title = 'Remove from local saves (Shift+S)';
+    button.title = 'Remove from local saves (v)';
     const label = button.querySelector('.xps-save-label');
     if (label) label.textContent = 'Saved';
   } else {
     button.classList.remove('xps-saved');
     button.setAttribute('aria-label', 'Save post locally');
-    button.title = 'Save post locally (Shift+S)';
+    button.title = 'Save post locally (v)';
     const label = button.querySelector('.xps-save-label');
     if (label) label.textContent = 'Save';
   }
-  button.setAttribute('aria-keyshortcuts', 'Shift+S');
+  button.setAttribute('aria-keyshortcuts', 'v');
 }
 
 function updateButtonsForUrl(url) {
