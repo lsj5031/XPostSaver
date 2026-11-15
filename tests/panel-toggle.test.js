@@ -70,4 +70,78 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     expect(space().defaultPrevented).toBe(true);
     expect(window.scrollBy).toHaveBeenCalledTimes(1);
   });
+
+  function pointer(handle, type, options = {}) {
+    const event = new window.MouseEvent(type, { bubbles: true, cancelable: true, clientX: 130, clientY: 90, ...options });
+    Object.defineProperties(event, {
+      pointerId: { value: options.pointerId ?? 1 },
+      isPrimary: { value: options.isPrimary ?? true },
+    });
+    handle.dispatchEvent(event);
+    return event;
+  }
+
+  function mockGeometry(panel, handle) {
+    // jsdom has no layout; establish the stored rectangle for pointer arithmetic.
+    panel.style.left = '120px';
+    panel.style.top = '80px';
+    panel.getBoundingClientRect = () => ({
+      left: parseFloat(panel.style.left), top: parseFloat(panel.style.top), width: 36, height: 36,
+    });
+    let captured = false;
+    handle.setPointerCapture = vi.fn(() => { captured = true; });
+    handle.hasPointerCapture = () => captured;
+    handle.releasePointerCapture = vi.fn(() => { captured = false; });
+  }
+
+  it('drags the circle without toggling, saves position, then allows a genuine click', () => {
+    const { panel, toggle, storage } = setup();
+    mockGeometry(panel, toggle);
+    expect(pointer(toggle, 'pointerdown').defaultPrevented).toBe(false);
+    pointer(toggle, 'pointermove', { clientX: 160, clientY: 110 });
+    expect(panel.dataset.dragging).toBe('1');
+    pointer(toggle, 'pointerup');
+    expect(panel.dataset.dragging).toBeUndefined();
+    expect(JSON.parse(storage.get('xpsPanelPosition'))).toEqual({ x: 150, y: 100 });
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    pointer(toggle, 'pointerdown');
+    pointer(toggle, 'pointerup');
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps jitter as a click and ignores nonprimary or secondary-button starts', () => {
+    const { panel, toggle } = setup();
+    mockGeometry(panel, toggle);
+    for (const options of [{ isPrimary: false }, { button: 2 }]) {
+      pointer(toggle, 'pointerdown', options);
+      pointer(toggle, 'pointermove', { clientX: 200 });
+      expect(toggle.setPointerCapture).not.toHaveBeenCalled();
+      expect(panel.style.left).toBe('120px');
+    }
+    pointer(toggle, 'pointerdown');
+    pointer(toggle, 'pointermove', { clientX: 133, clientY: 92 });
+    pointer(toggle, 'pointerup');
+    expect(window.GM_setValue).not.toHaveBeenCalled();
+    toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it.each(['pointercancel', 'lostpointercapture'])('cleans up %s and retains keyboard activation and movement', (ending) => {
+    const { panel, toggle } = setup();
+    mockGeometry(panel, toggle);
+    pointer(toggle, 'pointerdown');
+    pointer(toggle, 'pointermove', { clientX: 160 });
+    pointer(toggle, ending, { pointerId: 2 });
+    expect(panel.dataset.dragging).toBe('1');
+    pointer(toggle, ending);
+    expect(panel.dataset.dragging).toBeUndefined();
+    pointer(toggle, 'pointermove', { clientX: 300 });
+    expect(panel.style.left).toBe('150px');
+    toggle.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+    expect(panel.style.left).toBe('134px');
+    toggle.click(); // Keyboard/programmatic activation has detail 0, not the trailing pointer click.
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
 });

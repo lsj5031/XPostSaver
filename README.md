@@ -71,8 +71,10 @@ Extraction behavior details:
 - Floating panel starts as a small bookmark circle on every page load. Click it
   (or focus it and press Enter/Space) to expand; the **−** button collapses it
   and keeps focus on the toggle. Hidden controls are not in the tab order.
-  Drag the expanded grip (or use its arrow keys) to save the panel position;
-  expansion and viewport resizing keep it onscreen, including narrow layouts.
+  Drag the circle without opening it, or drag the expanded grip, to save the
+  panel position across page loads. Arrow keys move either focused handle.
+  Small click jitter still opens the circle; dragging does not.
+  Expansion and viewport resizing keep it onscreen, including narrow layouts.
   Saved posts and fact-check settings are unchanged by opening/closing the panel.
 - Expanded controls:
   - `Export (N)`: downloads `x-saved-posts-YYYY-MM-DD.jsonl`
@@ -139,7 +141,7 @@ Prerequisite: Rust toolchain with `cargo` installed.
 
 1. Open X.com.
 2. Click `Save` on posts you want to keep.
-3. Click the floating bookmark circle to expand the panel:
+3. Click the floating bookmark circle to expand the panel (drag it to move without opening):
    - `Export` to JSONL
    - `Copy` to clipboard
    - `Clear` to remove all saves

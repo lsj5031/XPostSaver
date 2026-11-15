@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.10
+// @version      0.5.11
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1130,8 +1130,14 @@
       user-select: none;
     }
 
-    #${UI.panelId}[data-dragging="1"] > .xps-drag-handle {
+    #${UI.panelId}[data-dragging="1"] > .xps-drag-handle,
+    #${UI.panelId}[data-dragging="1"] > .xps-panel-toggle {
       cursor: grabbing;
+    }
+
+    #${UI.panelId} > .xps-panel-toggle {
+      touch-action: none;
+      user-select: none;
     }
 
     #${UI.panelId} > button:focus-visible {
@@ -1243,25 +1249,47 @@
     return constrained;
   }
   __name(setPanelPosition, "setPanelPosition");
-  function makePanelDraggable(panel, handle) {
+  function makePanelDraggable(panel, handles) {
     const storedPosition = parsePanelPosition(storageGet(PANEL_POSITION_KEY));
     const initialRect = panel.getBoundingClientRect();
     setPanelPosition(panel, storedPosition || { x: initialRect.left, y: initialRect.top });
+    for (const handle of handles) {
+      wirePanelDragHandle(panel, handle);
+    }
+    window.addEventListener("resize", () => {
+      const rect = panel.getBoundingClientRect();
+      setPanelPosition(panel, { x: rect.left, y: rect.top });
+    });
+  }
+  __name(makePanelDraggable, "makePanelDraggable");
+  function wirePanelDragHandle(panel, handle) {
     let drag = null;
+    let suppressPointerClick = false;
+    handle.addEventListener("click", (event) => {
+      if (!suppressPointerClick || event.detail === 0) return;
+      suppressPointerClick = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
     handle.addEventListener("pointerdown", (event) => {
-      if (!event.isPrimary || event.button !== 0) return;
+      if (!event.isPrimary || event.button !== 0 || drag) return;
+      suppressPointerClick = false;
       const rect = panel.getBoundingClientRect();
       drag = {
         pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
         offsetX: event.clientX - rect.left,
-        offsetY: event.clientY - rect.top
+        offsetY: event.clientY - rect.top,
+        moved: false
       };
-      panel.dataset.dragging = "1";
       handle.setPointerCapture(event.pointerId);
-      event.preventDefault();
     });
     handle.addEventListener("pointermove", (event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
+      if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return;
+      drag.moved = true;
+      panel.dataset.dragging = "1";
       setPanelPosition(panel, {
         x: event.clientX - drag.offsetX,
         y: event.clientY - drag.offsetY
@@ -1270,13 +1298,16 @@
     const finishDrag = /* @__PURE__ */ __name((event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
       const rect = panel.getBoundingClientRect();
+      const moved = drag.moved;
       drag = null;
+      suppressPointerClick = moved;
       delete panel.dataset.dragging;
-      setPanelPosition(panel, { x: rect.left, y: rect.top }, { persist: true });
+      if (moved) setPanelPosition(panel, { x: rect.left, y: rect.top }, { persist: true });
       if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
     }, "finishDrag");
     handle.addEventListener("pointerup", finishDrag);
     handle.addEventListener("pointercancel", finishDrag);
+    handle.addEventListener("lostpointercapture", finishDrag);
     handle.addEventListener("keydown", (event) => {
       const movement = {
         ArrowLeft: [-16, 0],
@@ -1293,12 +1324,8 @@
       );
       event.preventDefault();
     });
-    window.addEventListener("resize", () => {
-      const rect = panel.getBoundingClientRect();
-      setPanelPosition(panel, { x: rect.left, y: rect.top });
-    });
   }
-  __name(makePanelDraggable, "makePanelDraggable");
+  __name(wirePanelDragHandle, "wirePanelDragHandle");
   function ensurePanel() {
     if (document.getElementById(UI.panelId)) return;
     const panel = document.createElement("div");
@@ -1308,7 +1335,7 @@
     dragHandle.type = "button";
     dragHandle.className = "xps-drag-handle";
     dragHandle.setAttribute("aria-label", "Move panel");
-    dragHandle.title = "Drag to move";
+    dragHandle.title = "Drag or use arrow keys to move";
     const exportBtn = document.createElement("button");
     exportBtn.type = "button";
     exportBtn.addEventListener("click", downloadJsonl);
@@ -1360,7 +1387,7 @@
     const updateToggle = /* @__PURE__ */ __name((expanded) => {
       toggle.setAttribute("aria-expanded", String(expanded));
       toggle.setAttribute("aria-label", expanded ? "Collapse X Post Saver panel" : "Expand X Post Saver panel");
-      toggle.title = expanded ? "Collapse panel" : "X Post Saver";
+      toggle.title = expanded ? "Collapse panel" : "X Post Saver: click to open; drag or use arrow keys to move";
       toggle.innerHTML = expanded ? '<span aria-hidden="true">\u2212</span>' : bookmark;
     }, "updateToggle");
     updateToggle(false);
@@ -1377,7 +1404,7 @@
     });
     panel.appendChild(toggle);
     (document.documentElement || document.body).appendChild(panel);
-    makePanelDraggable(panel, dragHandle);
+    makePanelDraggable(panel, [dragHandle, toggle]);
     updatePanelCount();
   }
   __name(ensurePanel, "ensurePanel");

@@ -85,6 +85,84 @@ try {
       let page = await fixture(code, viewport);
       const toggle = () => page.locator('.xps-panel-toggle');
       await capture(page, `${prefix}-01-collapsed`, false);
+      await page.evaluate(() => {
+        window.expansions = 0;
+        new MutationObserver((records) => {
+          window.expansions += records.filter((record) => record.oldValue === 'false').length;
+        }).observe(document.querySelector('.xps-panel-toggle'), { attributes: true, attributeFilter: ['aria-expanded'], attributeOldValue: true });
+      });
+      const circle = await toggle().boundingBox();
+      const circleStart = { x: circle.x + 18, y: circle.y + 18 };
+      await page.mouse.move(circleStart.x, circleStart.y);
+      await page.mouse.down();
+      await page.mouse.move(circleStart.x - 70, circleStart.y - 100, { steps: 8 });
+      const during = await capture(page, `${prefix}-01a-during-circle-drag`, false);
+      assert.equal(await page.locator('#xps-panel').getAttribute('data-dragging'), '1');
+      assert.equal(during.bounds.x, circle.x - 70);
+      assert.equal(during.bounds.y, circle.y - 100);
+      await page.mouse.up();
+      const circleDragged = await capture(page, `${prefix}-01b-after-circle-drag`, false);
+      assert.equal(await page.evaluate(() => window.expansions), 0, 'pointerup must never expand');
+      assert.equal(await page.locator('#xps-panel').getAttribute('data-dragging'), null);
+      const circleSaved = JSON.parse(circleDragged.storage.xpsPanelPosition);
+      assert.deepEqual(circleSaved, { x: circleDragged.bounds.x, y: circleDragged.bounds.y });
+      await toggle().click();
+      await capture(page, `${prefix}-01c-next-click-expanded`, true);
+      assert.equal(await page.evaluate(() => window.expansions), 1);
+      await toggle().click();
+      await page.close();
+      page = await fixture(code, viewport, circleDragged.storage);
+      const circleReloaded = await capture(page, `${prefix}-01d-circle-drag-reload`, false);
+      assert.equal(circleReloaded.bounds.x, circleSaved.x);
+      assert.equal(circleReloaded.bounds.y, circleSaved.y);
+      const jitter = await toggle().boundingBox();
+      await page.mouse.move(jitter.x + 18, jitter.y + 18);
+      await page.mouse.down();
+      await page.mouse.move(jitter.x + 21, jitter.y + 20);
+      await page.mouse.up();
+      await capture(page, `${prefix}-01e-jitter-opens`, true);
+      await toggle().click();
+      await toggle().focus();
+      const beforeArrow = await toggle().boundingBox();
+      await page.keyboard.press('ArrowLeft');
+      assert.equal(await page.locator('#xps-panel').evaluate((panel) => panel.getBoundingClientRect().x), beforeArrow.x - 16);
+      // Synthetic touch/pen lifecycle coverage, not a claim of physical-device input.
+      for (const pointerType of ['touch', 'pen']) {
+        for (const ending of ['pointercancel', 'lostpointercapture']) {
+          await toggle().evaluate((button, { pointerType, ending }) => {
+            const rect = button.getBoundingClientRect();
+            const send = (type, x, extra = {}) => button.dispatchEvent(new PointerEvent(type, {
+              pointerId: 77, pointerType, isPrimary: true, button: 0,
+              clientX: x, clientY: rect.y + 18, bubbles: true, ...extra,
+            }));
+            // Untrusted events cannot acquire real pointer capture; stub only that API.
+            const capture = button.setPointerCapture;
+            button.setPointerCapture = () => {};
+            send('pointerdown', rect.x + 18, { isPrimary: false });
+            send('pointermove', rect.x + 60);
+            if (button.parentElement.dataset.dragging) throw new Error('nonprimary drag');
+            send('pointerdown', rect.x + 18);
+            send('pointermove', rect.x + 28);
+            if (button.parentElement.dataset.dragging !== '1') throw new Error('missing synthetic drag');
+            send(ending, rect.x + 28);
+            if (button.parentElement.dataset.dragging) throw new Error('stuck synthetic drag');
+            button.setPointerCapture = capture;
+          }, { pointerType, ending });
+          assert.equal(await toggle().getAttribute('aria-expanded'), 'false');
+        }
+      }
+      assert.equal(await toggle().evaluate((button) => getComputedStyle(button).touchAction), 'none');
+      // Real mouse capture with both viewport extremes.
+      for (const [edge, x, y] of [['top-left', -100, -100], ['bottom-right', viewport.width + 100, viewport.height + 100]]) {
+        const rect = await toggle().boundingBox();
+        await page.mouse.move(rect.x + 18, rect.y + 18);
+        await page.mouse.down();
+        await page.mouse.move(x, y, { steps: 5 });
+        await page.mouse.up();
+        const clamped = await capture(page, `${prefix}-01f-${edge}`, false);
+        assert.equal(clamped.bounds.x, edge === 'top-left' ? 8 : viewport.width - 44);
+        assert.equal(clamped.bounds.y, edge === 'top-left' ? 8 : viewport.height - 44);
+      }
       // Collapsed controls cannot receive keyboard focus.
       await toggle().focus();
       await page.keyboard.press('Tab');
