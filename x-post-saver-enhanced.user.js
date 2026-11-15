@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.9
+// @version      0.5.10
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1088,6 +1088,8 @@
       box-sizing: border-box;
       width: max-content;
       max-width: calc(100vw - 16px);
+      max-height: calc(100vh - 16px);
+      overflow: auto;
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(6px);
@@ -1132,7 +1134,7 @@
       cursor: grabbing;
     }
 
-    #${UI.panelId} > .xps-drag-handle:focus-visible {
+    #${UI.panelId} > button:focus-visible {
       outline: 2px solid rgb(29, 155, 240);
       outline-offset: 2px;
     }
@@ -1162,6 +1164,33 @@
       #${UI.panelId} {
         grid-template-columns: max-content;
       }
+    }
+
+    #${UI.panelId} > [hidden] {
+      display: none;
+    }
+
+    #${UI.panelId}[data-collapsed="true"] {
+      display: flex;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      gap: 0;
+      overflow: visible;
+      border-radius: 50%;
+    }
+
+    #${UI.panelId}[data-collapsed="true"] > .xps-panel-toggle {
+      width: 36px;
+      height: 36px;
+      padding: 9px;
+      color: #ddd;
+    }
+
+    #${UI.panelId} > .xps-panel-toggle svg {
+      display: block;
+      width: 16px;
+      height: 16px;
     }
 
     #${UI.toastId} {
@@ -1274,6 +1303,7 @@
     if (document.getElementById(UI.panelId)) return;
     const panel = document.createElement("div");
     panel.id = UI.panelId;
+    panel.dataset.collapsed = "true";
     const dragHandle = document.createElement("button");
     dragHandle.type = "button";
     dragHandle.className = "xps-drag-handle";
@@ -1319,6 +1349,33 @@
     factSettings.textContent = "\u6838\u67E5\u8BBE\u7F6E";
     factSettings.addEventListener("click", factChecker.settings);
     panel.appendChild(factSettings);
+    const controls2 = Array.from(panel.children);
+    for (const control of controls2) {
+      if (control instanceof HTMLElement) control.hidden = true;
+    }
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "xps-panel-toggle";
+    const bookmark = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 2.5h8v11L8 11l-4 2.5z"/></svg>';
+    const updateToggle = /* @__PURE__ */ __name((expanded) => {
+      toggle.setAttribute("aria-expanded", String(expanded));
+      toggle.setAttribute("aria-label", expanded ? "Collapse X Post Saver panel" : "Expand X Post Saver panel");
+      toggle.title = expanded ? "Collapse panel" : "X Post Saver";
+      toggle.innerHTML = expanded ? '<span aria-hidden="true">\u2212</span>' : bookmark;
+    }, "updateToggle");
+    updateToggle(false);
+    toggle.addEventListener("click", () => {
+      const rect = panel.getBoundingClientRect();
+      const expanded = panel.dataset.collapsed === "true";
+      panel.dataset.collapsed = String(!expanded);
+      for (const control of controls2) {
+        if (control instanceof HTMLElement) control.hidden = !expanded;
+      }
+      updateToggle(expanded);
+      setPanelPosition(panel, { x: rect.left, y: rect.top });
+      toggle.focus({ preventScroll: true });
+    });
+    panel.appendChild(toggle);
     (document.documentElement || document.body).appendChild(panel);
     makePanelDraggable(panel, dragHandle);
     updatePanelCount();
@@ -1403,6 +1460,7 @@
   __name(getFocusedShortcutPost, "getFocusedShortcutPost");
   function onPageScrollShortcut(event) {
     if (event.key !== " " || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+    if (event.target instanceof Element && event.target.closest(`#${UI.panelId} > .xps-panel-toggle`)) return;
     const controls2 = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, dialog, [role="dialog"], [role="alertdialog"]';
     if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls2)) || document.querySelector('dialog[open], [aria-modal="true"]')) return;
     event.preventDefault();

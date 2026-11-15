@@ -68,10 +68,18 @@ Extraction behavior details:
 
 ### Export and UI
 
-- Floating panel with:
+- Floating panel starts as a small bookmark circle on every page load. Click it
+  (or focus it and press Enter/Space) to expand; the **−** button collapses it
+  and keeps focus on the toggle. Hidden controls are not in the tab order.
+  Drag the expanded grip (or use its arrow keys) to save the panel position;
+  expansion and viewport resizing keep it onscreen, including narrow layouts.
+  Saved posts and fact-check settings are unchanged by opening/closing the panel.
+- Expanded controls:
   - `Export (N)`: downloads `x-saved-posts-YYYY-MM-DD.jsonl`
   - `Copy`: copies JSONL to clipboard
+  - `Export URLs` / `Copy URLs`: exports or copies saved post URLs
   - `Clear`: clears all saved posts after confirmation
+  - `核查设置`: edits the fact-check prompt template
 - Toast notifications for success/error states.
 
 ## Rust CLI (`xps-render`) Features
@@ -131,7 +139,7 @@ Prerequisite: Rust toolchain with `cargo` installed.
 
 1. Open X.com.
 2. Click `Save` on posts you want to keep.
-3. Use floating panel:
+3. Click the floating bookmark circle to expand the panel:
    - `Export` to JSONL
    - `Copy` to clipboard
    - `Clear` to remove all saves
@@ -223,6 +231,19 @@ node scripts/check-navigation-browser.js
   Replace the placeholders above with your local paths. `XPS_EVIDENCE` sets the output directory
   (default `/tmp/xps-jk-evidence`) for ordered screenshots, trace, and measurements.
   Its stale native-navigation handler is an explicit simulation, not verified X internals.
+
+- Optional offline Chromium panel fixture, using the same local tool environment:
+
+```bash
+XPS_PLAYWRIGHT="/absolute/path/to/playwright-core/index.js" \
+XPS_CHROMIUM="/absolute/path/to/chromium" \
+node scripts/check-panel-browser.js
+```
+
+  Tests source and bundle on desktop/narrow viewports, native Enter/Space toggle,
+  copy/count, drag/reload, stored edge positions and resize clamping.
+  `XPS_EVIDENCE` defaults to `/tmp/xps-circle-evidence` for ordered screenshots,
+  a side-by-side preview and measurements. All network requests are blocked.
 
 ### Rust CLI
 
