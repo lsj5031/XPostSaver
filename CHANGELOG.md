@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.17
+
+- Keep the control simply Masonry: On/Off; bounded, deduplicated diagnostics stay
+  in the console. Missing native slice metadata is reconstructed, not a blocker.
+- Restore permissive masonry activation: missing own permalinks, unknown/conflicting
+  native identities, placeholder reorder and pending commits no longer block layout.
+- Preserve raw native renderer entries and coordinate schemas. Unverified windows
+  use estimated geometry plus local DOM packing, with no guessed persistent identity.
+- Keep stable known-post columns and persistent shortcut badges. Missing own links
+  omit only their badges; unverified cards may lose sticky-column placement.
+- Retain bounded native windows, pagination, detail/toggle restoration, drawer,
+  keyboard guards and stored data. No new dependencies or Rust changes.
+
 ## 0.5.16
 
 - Match explicit tweet identities across native item/list wrapper fields rather

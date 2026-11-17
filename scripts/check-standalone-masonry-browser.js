@@ -287,17 +287,15 @@ async function layoutIdentities(page, kind) {
   stableColumns(removed, replaced, 'new DOM with the same own identities retains columns');
   const geometry = await page.evaluate(() => {
     const result = window.fixture.scroller._getRenderCandidates();
-    const feed = document.querySelector('.timeline').getBoundingClientRect();
     const mismatches = [...document.querySelectorAll('.cell')].flatMap((cell) => {
       const item = result.allItemsWithPositions.find((item) => String(item.id) === cell.dataset.id);
-      const r = cell.getBoundingClientRect();
-      return !item || Math.abs(item.position - (r.top - feed.top)) > 1 || Math.abs(item.height - r.height) > 1 ? [cell.dataset.id] : [];
+      return !item || item !== window.fixture.data.find((entry) => String(entry.id) === cell.dataset.id) ? [cell.dataset.id] : [];
     });
     return { mismatches, slice:result.slice, count:result.newRenderedItems.length,
       coherent:result.newRenderedItems.every((item, i) => item === result.allItemsWithPositions[result.slice.start + i]),
       untouched:window.fixture.data.every((item) => item.position === undefined) };
   });
-  assert.deepEqual(geometry.mismatches, [], 'native candidate positions/heights match displayed identity geometry');
+  assert.deepEqual(geometry.mismatches, [], 'native candidates preserve raw entry references, independent of CSS geometry');
   assert.ok(geometry.count <= 120 && geometry.coherent && geometry.untouched, 'bounded synthetic slice, no mutation of native entries');
   await page.evaluate(() => {
     window.noopCalls = window.handleCalls; window.noopStyles = 0; window.noopEngineEvents = 0;
@@ -371,14 +369,12 @@ async function scrollLayoutStability(page, kind, known, bounded) {
   assert.ok(returned.every((a) => a.x === back.cells.find((b) => b.id === a.id).x), 'offscreen DOM recycling does not forget identity columns');
   const mismatches = await page.evaluate(() => {
     const candidates = window.fixture.scroller._getRenderCandidates();
-    const feed = document.querySelector('.timeline').getBoundingClientRect();
     return [...document.querySelectorAll('.cell')].filter((cell) => {
       const entry = candidates.allItemsWithPositions.find((item) => String(item.id) === cell.dataset.id);
-      const rect = cell.getBoundingClientRect();
-      return Math.abs(entry.position - (rect.top - feed.top)) > 1 || Math.abs(entry.height - rect.height) > 1;
+      return entry !== window.fixture.data.find((item) => String(item.id) === cell.dataset.id);
     }).map((cell) => cell.dataset.id);
   });
-  assert.deepEqual(mismatches, [], 'synthetic offscreen/native geometry stays coherent after recycling');
+  assert.deepEqual(mismatches, [], 'native entries remain untouched after offscreen recycling');
   await writeFile(`${output}/${kind}-layout-scroll-summary.json`, JSON.stringify({ common:common.length, returned:returned.length, mismatches }, null, 2));
 }
 
@@ -660,7 +656,7 @@ try {
     assert.equal(await page.locator('.xps-nav-toggle').count(), 1);
     await measure(page, `${kind}-11-container-return`);
     await page.locator('.xps-panel-toggle').click();
-    await page.getByRole('button', { name:'Masonry: On (active)', exact:true }).click();
+    await page.getByRole('button', { name:'Masonry: On', exact:true }).click();
     await page.waitForFunction(() => !document.querySelector('.xps-masonry-container'));
     assert.equal(await page.evaluate(() => window.fixture.scroller._getRenderCandidates === window.fixture.original), true);
     await page.getByRole('button', { name:'Masonry: Off', exact:true }).click();
@@ -685,7 +681,7 @@ try {
     await page.goto('https://x.com/home');
     await installFixture(page, mode);
     await page.addScriptTag({ content:bundle });
-    if (!['unsupported','opaque'].includes(mode)) {
+    if (mode !== 'unsupported') {
       await settle(page);
       await measure(page, `bundle-12-${mode}`);
       if (mode === 'wrapped') {
@@ -700,10 +696,7 @@ try {
       }
     }
     else {
-      if (mode === 'opaque') {
-        await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
-          .some((node) => /unsupported.*candidate/i.test(node.textContent)), null, { timeout:7500 });
-      } else await page.waitForTimeout(800);
+      await page.waitForTimeout(800);
       assert.equal(await page.locator('.xps-masonry-container').count(), 0);
       assert.equal(await page.evaluate(() => window.fixture.scroller._getRenderCandidates === window.fixture.original), true);
     }

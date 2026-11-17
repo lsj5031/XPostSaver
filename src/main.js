@@ -764,7 +764,7 @@ function ensurePanel(masonry) {
   masonryToggle.style.whiteSpace = 'normal';
   masonryToggle.style.maxWidth = 'calc(100vw - 32px)';
   const labelMasonry = () => {
-    const label = `Masonry: ${masonry.enabled() ? `On (${masonry.status()})` : 'Off'}`;
+    const label = `Masonry: ${masonry.enabled() ? 'On' : 'Off'}`;
     if (masonryToggle.textContent !== label) {
       masonryToggle.textContent = label;
       if (panel.isConnected) {

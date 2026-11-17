@@ -17,8 +17,12 @@ const browser = await chromium.launch({ executablePath:process.env.XPS_CHROMIUM,
 const results = [];
 const shapes = ['object-position', 'wrapper-id', 'primitive-item', 'anonymous-loader', 'duplicate-loader', 'reordered-cursor', 'scalar-cursor'];
 const mixedDelays = ['anonymous-delay', 'repeated-delay', 'anonymous-delay-off', 'repeated-delay-route'];
-const guarded = ['unknown-entry', 'conflicting-entry', 'wrong-post', 'extra-placeholder', 'duplicate-dom'];
+const guarded = ['unknown-entry', 'conflicting-entry', 'wrong-post', 'extra-placeholder', 'duplicate-dom', 'no-own-permalink', 'opaque-position', 'missing-native-window'];
 const versions = [['source', source], ['bundle', bundle]];
+if (process.argv.includes('--baseline-only')) {
+  versions.splice(0, versions.length, ['v0.5.16', execFileSync('git', ['show', 'a786daa:x-post-saver-enhanced.user.js'],
+    { cwd:new URL('..', import.meta.url), encoding:'utf8', maxBuffer:5 * 1024 * 1024 })]);
+}
 if (process.argv.includes('--mismatch-only')) {
   for (const [name, ref] of [['v0.5.15', 'dbd6b03'], ['v0.5.13', 'cdb3816']]) {
     versions.unshift([name, execFileSync('git', ['show', `${ref}:x-post-saver-enhanced.user.js`],
@@ -33,15 +37,19 @@ if (process.argv.includes('--compare-releases')) {
 }
 try {
   for (const [kind, code] of versions) {
-    for (const scenario of process.argv.includes('--mismatch-only') ? (kind.startsWith('v') ? ['reordered-cursor'] : ['reordered-cursor', 'scalar-cursor', ...guarded]) : kind.startsWith('v') ? [...shapes.filter((shape) => !['reordered-cursor', 'scalar-cursor'].includes(shape)), 'delayed-commit'] :
+    for (const scenario of process.argv.includes('--baseline-only') ? ['no-own-permalink'] : process.argv.includes('--usability-only') ? ['event-retry', ...guarded, 'delayed-commit', ...mixedDelays] : process.argv.includes('--permissive-only') ? ['no-own-permalink', 'opaque-position'] : process.argv.includes('--mismatch-only') ? (kind.startsWith('v') ? ['reordered-cursor'] : ['reordered-cursor', 'scalar-cursor', ...guarded]) : kind.startsWith('v') ? [...shapes.filter((shape) => !['reordered-cursor', 'scalar-cursor'].includes(shape)), 'delayed-commit'] :
       process.argv.includes('--remediation-only') ? [...mixedDelays, 'unknown-entry'] :
       ['late-fiber', 'event-retry', 'instance-props', ...guarded, 'delayed-commit', ...shapes, ...mixedDelays]) {
       const context = await browser.newContext({ viewport:{ width:1440, height:900 }, serviceWorkers:'block' });
       const page = await context.newPage();
       const errors = [];
+      const warnings = [];
       let geometry = null;
       let pending = null;
       page.on('pageerror', (error) => errors.push(error.message));
+      page.on('console', (message) => {
+        if (message.type() === 'warning' && message.text().startsWith('[XPostSaver masonry]')) warnings.push(message.text());
+      });
       await context.route('**/*', (route) => route.request().url() === 'https://x.com/home' ?
         route.fulfill({ contentType:'text/html', body:`<!doctype html><style>
         body{margin:0}.timeline{position:relative;width:100%;height:4000px}
@@ -52,8 +60,10 @@ try {
       await page.evaluate((scenario) => {
         window.GM_getValue = () => undefined;
         window.GM_setValue = () => {};
+        window.activationTabs = [];
+        window.GM_openInTab = (url) => window.activationTabs.push(url);
         let timeline = document.querySelector('.timeline');
-        const compatibility = ['object-position', 'wrapper-id', 'primitive-item', 'anonymous-loader', 'duplicate-loader', 'reordered-cursor', 'scalar-cursor'].includes(scenario);
+        const compatibility = ['object-position', 'wrapper-id', 'primitive-item', 'anonymous-loader', 'duplicate-loader', 'reordered-cursor', 'scalar-cursor', 'no-own-permalink', 'opaque-position'].includes(scenario);
         const mixedDelay = scenario.startsWith('anonymous-delay') || scenario.startsWith('repeated-delay');
         const data = Array.from({ length:compatibility ? 360 : mixedDelay ? 40 : 24 }, (_, i) => ({
           item:{ id:`tweet-${i + 1}` }, fixtureId:i + 1, position:i * 180, height:180 }));
@@ -71,6 +81,7 @@ try {
         if (scenario === 'unknown-entry') data[0] = { item:{ opaque:true }, fixtureId:1, position:0, height:180 };
         if (scenario === 'conflicting-entry') data[0].entryId = 'tweet-999';
         if (scenario === 'wrong-post') data[0].item.id = 'tweet-999';
+        if (scenario === 'opaque-position') data.forEach((entry) => { entry.item = { opaque:true }; entry.position = { offset:NaN }; });
         if (scenario === 'reordered-cursor') {
           // Named posts plus a primitive native cursor. The DOM puts its loading
           // child last, not at the candidate's index. This is modeled, not live data.
@@ -105,7 +116,9 @@ try {
           _getRenderCandidates() {
             const entries = scenario === 'anonymous-loader' ? data.map((entry) =>
               entry.fixtureId === 'loader' ? { ...entry, item:{ loading:true } } : entry) : data;
-            return { allItemsWithPositions:entries, newRenderedItems:entries.slice(0, 12), slice:{ start:0, end:12 } };
+            return scenario === 'missing-native-window' && timeline.classList.contains('xps-masonry-container') &&
+              scroller._getRenderCandidates !== original ? { allItemsWithPositions:entries } :
+              { allItemsWithPositions:entries, newRenderedItems:entries.slice(0, 12), slice:{ start:0, end:12 } };
           },
           _handleScroll() {
             renderCalls++;
@@ -122,7 +135,7 @@ try {
             if ([...timeline.children].map((node) => node.dataset.id).join() === ids.join()) return;
             const html = ids.map((id, i) => `<div class="cell" data-id="${id}" style="transform:translateY(${i * 180}px)">${String(id).startsWith('loader') ?
               '<div role="progressbar">Loading fixture</div>' :
-              `<article role="article" data-testid="tweet"><a href="/fixture/status/${id}"><time>Fixture</time></a><div data-testid="tweetText">Offline fixture</div><div role="group"><button data-testid="reply">Reply</button></div></article>`}</div>`).join('');
+              `<article role="article" data-testid="tweet">${scenario === 'no-own-permalink' ? '' : `<a href="/fixture/status/${id}"><time>Fixture</time></a>`}<div data-testid="tweetText">Offline fixture</div><div role="group"><button data-testid="reply">Reply</button></div></article>`}</div>`).join('');
             if (deferCommit) setTimeout(() => { timeline.innerHTML = html; }, 350);
             else timeline.innerHTML = html;
           },
@@ -149,6 +162,19 @@ try {
           original, readiness:scroller._getIsHeightsReady, scroller, data, rendered:() => renderedIds, renderCalls:() => renderCalls,
           hydrate() { hydrated = true; },
           reads:() => reads,
+          recycleFirst() {
+            const cell = timeline.querySelector('.cell');
+            const entry = data.find((entry) => String(entry.fixtureId) === cell.dataset.id);
+            entry.fixtureId += 10000;
+            entry.item = { opaque:true };
+            cell.dataset.id = String(entry.fixtureId);
+            cell.querySelector('[data-testid="tweetText"]').textContent = 'Recycled offline card';
+            const image = document.createElement('img');
+            image.width = 160; image.height = 230;
+            image.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="230"/>');
+            cell.querySelector('article').append(image);
+            scroller._handleScroll();
+          },
           allowMore() { allowMore = true; },
           fetchCalls:() => fetchCalls,
           replaceDataLate() {
@@ -171,6 +197,17 @@ try {
       await page.addScriptTag({ content:'const unsafeWindow = window.pageRealm;' });
       await page.addScriptTag({ content:code });
       await page.getByRole('button', { name:'Expand X Post Saver panel', exact:true }).click();
+      if (kind === 'v0.5.16') {
+        await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
+          .some((node) => node.textContent.includes('waiting for native post commit (own permalink match missing)')));
+        const status = await page.getByRole('button', { name:/Masonry:/ }).textContent();
+        assert.equal(status, 'Masonry: On (waiting for native post commit (own permalink match missing))');
+        assert.equal(await page.locator('.xps-masonry-container').count(), 0);
+        await page.screenshot({ path:`${output}/${kind}-${scenario}.png` });
+        results.push({ kind, scenario, status, errors });
+        await context.close();
+        continue;
+      }
       if (kind === 'v0.5.15') {
         await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
           .some((node) => node.textContent.includes('unsupported: own-post/native candidate identity mismatch')), null, { timeout:7500 });
@@ -211,51 +248,17 @@ try {
         assert.ok(reads > 0, 'bridge discovery attempted before retry exhaustion');
         await page.waitForTimeout(700);
         assert.equal(await page.evaluate(() => window.activationFixture.reads()), reads, 'no idle bridge polling after budget exhaustion');
-        assert.match(await page.locator('#xps-panel button').filter({ hasText:'Masonry:' }).textContent(), /On.*waiting for React bridge/);
+        assert.equal(await page.getByRole('button', { name:/Masonry:/ }).textContent(), 'Masonry: On');
+        assert.ok(warnings.some((message) => message.includes('waiting for React bridge')), 'bridge diagnostic is console-only');
         await page.evaluate(() => { window.activationFixture.hydrate(); dispatchEvent(new Event('scroll')); });
       }
-      if (guarded.includes(scenario)) {
-        await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
-          .some((node) => node.textContent.includes('waiting for native post commit')), null, { timeout:1000 });
-        const waitingAt = Date.now();
-        assert.equal(await page.locator('.xps-masonry-container, .xps-masonry-item').count(), 0);
-        await page.waitForTimeout(300);
-        await page.evaluate(() => dispatchEvent(new Event('scroll')));
-        await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
-          .some((node) => /unsupported.*candidate/i.test(node.textContent)), null, { timeout:7000 });
-        pending = { fallbackAfterWaitingMs:Date.now() - waitingAt };
-        assert.ok(pending.fallbackAfterWaitingMs <= 7500, 'DOM/user wake cannot extend the unknown-post deadline');
-        assert.equal(await page.locator('.xps-masonry-container').count(), 0);
-        assert.equal(await page.evaluate(() => window.activationFixture.scroller._getRenderCandidates === window.activationFixture.original), true);
-        assert.match(await page.locator('#xps-panel button').filter({ hasText:'Masonry:' }).textContent(), /unsupported.*candidate/i);
-        const calls = await page.evaluate(() => window.activationFixture.renderCalls());
-        await page.waitForTimeout(700);
-        assert.equal(await page.evaluate(() => window.activationFixture.renderCalls()), calls, 'unknown-post fallback stays idle');
-        const fallbackStatus = await page.getByRole('button', { name:/Masonry:/ }).textContent();
-        assert.match(fallbackStatus, /all 24, rendered 24, children \d+, posts \d+, unmatched \d+\/\d+/);
-        if (scenario === 'unknown-entry') {
-          assert.match(fallbackStatus, /sample object, item object, ids -\/-\/-/);
-          await page.evaluate(() => {
-            const f = window.activationFixture;
-            f.data[0] = { item:{ id:'tweet-1001' }, fixtureId:1001, position:0, height:180 };
-            f.scroller._handleScroll();
-          });
-          await page.waitForFunction(() => document.querySelector('.xps-masonry-container [data-id="1001"]'));
-          assert.match(await page.getByRole('button', { name:/Masonry:/ }).textContent(), /On.*active/);
-          pending.resumedAfterNativeCommit = true;
-        }
-      } else {
+      {
         await page.waitForFunction(() => document.querySelector('.xps-masonry-container'), null, { timeout:5000 });
-        assert.match(await page.locator('#xps-panel button').filter({ hasText:'Masonry:' }).textContent(), kind === 'v0.5.13' ? /On/ : /On.*active/i);
+        assert.equal(await page.getByRole('button', { name:/Masonry:/ }).textContent(), 'Masonry: On');
         await page.screenshot({ path:`${output}/${kind}-${scenario}-active.png` });
         if (scenario === 'delayed-commit' || mixedDelays.includes(scenario)) {
           await page.evaluate(() => window.activationFixture.replaceDataLate());
-          if (kind !== 'v0.5.13') {
-            await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
-              .some((node) => node.textContent.includes('waiting for native post commit')), null, { timeout:1000 });
-            assert.equal(await page.locator('.xps-masonry-container').count(), 0, 'suspend CSS while old DOM is pending');
-            assert.equal(await page.locator('.xps-masonry-item').count(), 0, 'no old post is laid out using an anonymous slot');
-          }
+          assert.equal(await page.locator('.xps-masonry-container').count(), 1, 'pending native commit never suspends visual layout');
           if (scenario.endsWith('-off') || scenario.endsWith('-route')) {
             if (scenario.endsWith('-off')) await page.getByRole('button', { name:/Masonry:/ }).click();
             else await page.evaluate(() => { history.pushState({}, '', '/fixture/status/1'); dispatchEvent(new PopStateEvent('popstate')); });
@@ -271,13 +274,14 @@ try {
               return f.scroller._getRenderCandidates === f.original && f.scroller._getIsHeightsReady === f.readiness;
             }), true, 'pending commit/deadline must not reinstall native hooks after Off/route');
             await page.screenshot({ path:`${output}/${kind}-${scenario}.png` });
-            results.push({ kind, scenario, errors, pendingRestoration:true });
+            assert.ok(warnings.length <= 8 && new Set(warnings).size === warnings.length);
+            results.push({ kind, scenario, errors, warnings, pendingRestoration:true });
             assert.deepEqual(errors, []);
             await context.close();
             continue;
           }
           await page.waitForFunction(() => document.querySelector('.xps-masonry-container [data-id="1001"]'));
-          assert.match(await page.getByRole('button', { name:/Masonry:/ }).textContent(), kind === 'v0.5.13' ? /On/ : /On.*active/);
+          assert.equal(await page.getByRole('button', { name:/Masonry:/ }).textContent(), 'Masonry: On');
           if (mixedDelays.includes(scenario)) {
             assert.deepEqual(await page.locator('.cell').evaluateAll((nodes) => nodes.map((node) => node.dataset.id)),
               await page.evaluate(() => window.activationFixture.rendered().map(String)), 'mixed commit uses actual native-selected identities');
@@ -286,7 +290,44 @@ try {
             pending = { resumedWithoutToggle:true, mounted:await page.locator('.cell').count() };
           }
         }
-        if (shapes.includes(scenario)) {
+        if (guarded.includes(scenario) || scenario === 'delayed-commit' || mixedDelays.includes(scenario)) {
+          await page.waitForTimeout(350);
+          geometry = await page.locator('.cell').evaluateAll((nodes) => {
+            const cells = nodes.map((node) => node.getBoundingClientRect());
+            let overlaps = 0;
+            for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
+              const a = cells[i], b = cells[j];
+              if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+                Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1) overlaps++;
+            }
+            return { mounted:nodes.length, columns:new Set(cells.map((r) => r.x)).size,
+              overlaps, finite:cells.every((r) => [r.x, r.y, r.width, r.height].every(Number.isFinite)) };
+          });
+          assert.ok(geometry.columns > 1, 'identity mismatch still produces multiple columns');
+          assert.equal(geometry.overlaps, 0);
+          assert.equal(geometry.finite, true);
+          assert.ok(geometry.mounted <= 122, 'only native-selected entries plus fixture placeholders');
+          if (scenario === 'no-own-permalink') assert.equal(await page.locator('.xps-masonry-key').count(), 0, 'no guessed shortcut targets');
+          assert.equal(await page.locator('.xps-masonry-key').evaluateAll((badges) => badges.every((badge) =>
+            [...document.querySelectorAll('.cell article > a')].some((link) => link.href === badge.dataset.url))), true,
+          'badges target actual own DOM links, never candidate identities');
+          assert.equal(await page.getByRole('button', { name:/Masonry:/ }).textContent(), 'Masonry: On');
+          const calls = await page.evaluate(() => window.activationFixture.renderCalls());
+          await page.waitForTimeout(250);
+          assert.equal(await page.evaluate(() => window.activationFixture.renderCalls()), calls,
+            'unmatched cards and console warnings do not cause native refresh churn');
+          if (scenario === 'wrong-post') {
+            const badge = page.locator('.xps-masonry-key').first();
+            await badge.waitFor({ state:'visible' });
+            const url = await badge.getAttribute('data-url');
+            const key = await badge.textContent();
+            await page.evaluate(() => document.activeElement.blur());
+            await page.keyboard.press(key);
+            assert.deepEqual(await page.evaluate(() => window.activationTabs), [url],
+              'bad native candidate cannot redirect a valid neighboring badge');
+          }
+        }
+        if (shapes.includes(scenario) || ['no-own-permalink', 'opaque-position'].includes(scenario)) {
           const bounds = async () => page.evaluate(() => {
             const feed = document.querySelector('.timeline'), f = window.activationFixture;
             const nativeIds = f.rendered();
@@ -306,6 +347,13 @@ try {
             else assert.deepEqual(actual, selected.map(String), 'native-selected entries are the posts actually rendered');
           };
           await page.waitForTimeout(250);
+          if (scenario === 'no-own-permalink') {
+            await page.evaluate(() => window.activationFixture.recycleFirst());
+            await page.waitForTimeout(350);
+            assert.equal(await page.locator('.xps-masonry-key').count(), 0);
+            assert.equal(await page.locator('.xps-masonry-container [data-id="10001"]').count(), 1,
+              'same DOM cell recycled without a permalink remains laid out after image growth');
+          }
           const first = await bounds();
           verifySelected(first.domIds, first.nativeIds);
           assert.equal(first.overlaps, 0);
@@ -317,7 +365,7 @@ try {
             const before = await columns();
             await page.locator('.cell').first().evaluate((node) => { node.style.height = '320px'; });
             await page.waitForTimeout(350);
-            assert.deepEqual(await columns(), before, 'native-format compatibility retains stable post columns after growth');
+            if (scenario !== 'no-own-permalink') assert.deepEqual(await columns(), before, 'known posts retain stable columns after growth');
           }
           await page.waitForTimeout(400);
           const calls = await page.evaluate(() => window.activationFixture.renderCalls());
@@ -328,12 +376,12 @@ try {
           const deep = await bounds();
           verifySelected(deep.domIds, deep.nativeIds);
           assert.equal(deep.overlaps, 0);
-          assert.ok(deep.visible >= 4, 'bounded compatibility slice covers viewport');
+          assert.ok(deep.visible >= 4, `bounded compatibility slice covers viewport: ${scenario} ${JSON.stringify(deep)}`);
           assert.ok(deep.domIds.length <= 120 && Number(deep.domIds[0]) > 1);
           geometry = { loaded:await page.evaluate(() => window.activationFixture.data.length),
             initialMounted:first.domIds.length, deepMounted:deep.domIds.length,
             deepVisible:deep.visible, initialOverlaps:first.overlaps, deepOverlaps:deep.overlaps,
-            stableColumnsAfterGrowth:kind.startsWith('v') ? null : true };
+            stableColumnsAfterGrowth:kind.startsWith('v') || scenario === 'no-own-permalink' ? null : true };
           await page.evaluate(() => { window.activationFixture.allowMore(); window.scrollTo(0, document.body.scrollHeight); });
           await page.waitForFunction((loaded) => window.activationFixture.data.length === loaded + 12, geometry.loaded);
           await page.waitForTimeout(350);
@@ -362,13 +410,15 @@ try {
         assert.equal(await page.evaluate(() => window.activationFixture.scroller._getRenderCandidates === window.activationFixture.original), true);
       }
       await page.screenshot({ path:`${output}/${kind}-${scenario}.png` });
-      results.push({ kind, scenario, errors, geometry, pending, reads:await page.evaluate(() => window.activationFixture.reads()) });
+      assert.ok(warnings.length <= 8, 'console diagnostics have a fixed session bound');
+      assert.equal(new Set(warnings).size, warnings.length, 'repeated layout/route/toggle work never repeats a diagnostic');
+      results.push({ kind, scenario, errors, warnings, geometry, pending, reads:await page.evaluate(() => window.activationFixture.reads()) });
       assert.deepEqual(errors, []);
       await context.close();
     }
   }
 } finally {
-  await writeFile(`${output}/activation-results.json`, JSON.stringify(results, null, 2));
+  await writeFile(`${output}/${process.argv.includes('--baseline-only') ? 'activation-baseline-results' : process.argv.includes('--usability-only') ? 'usability-results' : 'activation-results'}.json`, JSON.stringify(results, null, 2));
   await browser.close();
 }
 console.log('Source/bundle late hydration, page-world routing, native fallback and restoration passed.');

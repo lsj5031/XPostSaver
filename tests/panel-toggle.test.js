@@ -38,7 +38,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     toggle.click();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(controls.every((button) => !button.hidden)).toBe(true);
-    expect(controls.map((button) => button.textContent)).toEqual(['', 'Export (1)', 'Copy', 'Export URLs', 'Copy URLs', 'Clear', '核查设置', 'Masonry: On (waiting for feed)']);
+    expect(controls.map((button) => button.textContent)).toEqual(['', 'Export (1)', 'Copy', 'Export URLs', 'Copy URLs', 'Clear', '核查设置', 'Masonry: On']);
     controls.find((button) => button.textContent === 'Copy URLs').click();
     await Promise.resolve();
     expect(writeText).toHaveBeenCalledWith('https://x.com/person/status/123\n');
@@ -62,7 +62,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     expect(control.hidden).toBe(true);
     toggle.click();
     control.click();
-    expect(control.textContent).toBe('Masonry: On (waiting for feed)');
+    expect(control.textContent).toBe('Masonry: On');
     expect(control.getAttribute('aria-pressed')).toBe('true');
     expect(storage.get('xpsMasonryEnabled')).toBe(true);
     control.click();

@@ -5,7 +5,6 @@ import css from './masonry.css';
 
 const POST = 'article[role="article"], [data-testid="tweet"]';
 const LIMIT = 120;
-const COMMIT_GRACE_MS = 6000;
 
 export function outerPosts(root) {
   return [...root.querySelectorAll(POST)].filter((post) => {
@@ -123,7 +122,7 @@ export function matchMasonryCells(cells, items, rendered) {
   const counts = new Map();
   for (const cell of matched) if (cell.item) counts.set(cell.item.key, (counts.get(cell.item.key) || 0) + 1);
   // Multiple DOM cards for one candidate (or multiple posts in one cell) cannot
-  // safely own a measurement. Suspend the entire commit instead.
+  // safely own a persistent measurement. Layout can still use local geometry.
   return matched.map((cell) => counts.get(cell.item?.key) > 1 || cell.postCount > 1 ? { ...cell, item:null } : cell);
 }
 
@@ -160,15 +159,22 @@ export function initMasonry({ read, write, permalink }) {
   let viewportDirty = true;
   const observed = new Set();
   let placement = createMasonryLayout();
+  let visualPlacement = createMasonryLayout();
   let activeRoute = '';
   let rejected = new WeakMap();
-  const mismatchCommits = new WeakMap();
   let status = 'waiting for feed';
   let retryContainer = null, retryCount = 0, retryTimer = 0;
   let bridgeReason = 'waiting for React bridge';
+  const warnings = new Set();
+  function warn(reason) {
+    if (warnings.has(reason) || warnings.size >= 8) return;
+    warnings.add(reason);
+    console.warn('[XPostSaver masonry]', reason);
+  }
   function setStatus(value) {
     if (status === value) return;
     status = value;
+    if (value.startsWith('unsupported:') || (value.startsWith('waiting for ') && value !== 'waiting for feed')) warn(value);
     document.dispatchEvent(new Event('xps-masonry-status'));
   }
   function reject(container, reason) {
@@ -186,12 +192,6 @@ export function initMasonry({ read, write, permalink }) {
     if (!retryTimer) retryCount = 0;
     schedule();
   }
-  function commitSignature(container) {
-    return [...container.children].map((child) => {
-      const posts = child.matches(POST) ? [child] : outerPosts(child);
-      return posts.length ? posts.map((post) => permalink(post) || '?').join('|') : '-';
-    }).join(',');
-  }
   const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
   const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
@@ -203,7 +203,6 @@ export function initMasonry({ read, write, permalink }) {
     observed.clear();
     const scroller = bridge?.scroller;
     if (bridge) {
-      window.clearTimeout(bridge.commitTimer);
       for (const [name, entry] of bridge.originals) {
         if (bridge.scroller[name] !== entry.installed) continue;
         if (entry.own) bridge.scroller[name] = entry.value;
@@ -218,6 +217,7 @@ export function initMasonry({ read, write, permalink }) {
     }
     active = null;
     placement = createMasonryLayout();
+    visualPlacement = createMasonryLayout();
     activeRoute = '';
     document.dispatchEvent(new Event('xps-masonry-change'));
     try { scroller?._handleScroll(); } catch { /* Native route may already be gone. */ }
@@ -279,8 +279,7 @@ export function initMasonry({ read, write, permalink }) {
       'waiting for native pagination callback' : 'unsupported: native scroll method missing';
     if (!scroller || !fetch || typeof scroller._handleScroll !== 'function') return null;
     const state = { scroller, fetch, originals: new Map(), items:[], rendered:[], geometry:{ positions:[], heights:[] },
-      commitDeadline:0, commitTimer:0 };
-    const anonymousRows = new Map();
+      start:0 };
     const replace = (name, installed) => {
       state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
       scroller[name] = installed;
@@ -291,55 +290,35 @@ export function initMasonry({ read, write, permalink }) {
       // An optional external engine may wrap this method after us. Once released,
       // such a retained wrapper must be a transparent native pass-through.
       if (bridge !== state) return result;
-      if (!Array.isArray(result?.allItemsWithPositions) || !result.slice || !Array.isArray(result.newRenderedItems)) {
+      if (!Array.isArray(result?.allItemsWithPositions)) {
         reject(container, 'unsupported: candidate envelope');
         schedule();
         return result;
       }
-      const anonymousSlots = new Set();
       const parsedEntries = result.allItemsWithPositions.map(masonryEntry);
       const counts = new Map();
       for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
       const items = result.allItemsWithPositions.map((entry, index) => {
         const parsed = parsedEntries[index];
-        if ((parsed && (parsed.post || counts.get(parsed.key) === 1)) ||
-            !entry || typeof entry !== 'object') return parsed;
-        // Only anonymous full-width loading/separator slots may use index keys.
-        // They never own post measurements/columns: a DOM post must match its
-        // own permalink below. Missing/repeated non-post labels aren't post IDs.
-        // Native wrappers may be recreated every call.
-        anonymousSlots.add(index);
-        if (!anonymousRows.has(index)) anonymousRows.set(index, Symbol('native row'));
-        return { key:anonymousRows.get(index), entry, anonymous:true, fullRow:true,
-          height:Number.isFinite(entry.height) && entry.height > 0 ? entry.height : 320 };
+        if (parsed && counts.get(parsed.key) === 1) return { ...parsed,
+          height:state.estimatedHeight ?? parsed.height };
+        // Opaque/repeated native entries are valid renderer input, not evidence
+        // of post ownership. Fresh keys prevent recycled slots inheriting cache.
+        return { key:Symbol(`native slot ${index}`), entry,
+          height:state.estimatedHeight ?? (Number.isFinite(entry?.height) && entry.height > 0 ? entry.height : 320) };
       });
-      for (const index of anonymousRows.keys()) if (!anonymousSlots.has(index)) anonymousRows.delete(index);
-      const posts = items.filter((item) => item?.post).map((item) => item.post);
-      if (items.some((item) => !item) || new Set(items.map((item) => item.key)).size !== items.length ||
-          new Set(posts).size !== posts.length) {
-        // Only report schema presence/types, never IDs, post text or props.
-        const first = result.allItemsWithPositions.find((entry) => !masonryEntry(entry));
-        const shape = first ? ` (item ${typeof first.item}, id ${typeof (first.item ?? first).id}, position ${typeof first.position})` : ' (duplicate identity)';
-        reject(container, `unsupported: candidate identity/position${shape}`);
-        schedule();
-        return result;
-      }
       state.items = items;
       const width = container.clientWidth;
+      if (!Number.isFinite(width) || width <= 0) return result;
       const layout = placement.update(items, width);
       state.geometry = layout;
       const y = Math.max(0, -container.getBoundingClientRect().top);
       const slice = masonryWindow(layout, y, innerHeight);
       if (!slice) { reject(container, 'unsupported: visible window exceeds safe limit'); return result; }
-      // Only the verified scalar geometry adapter rewrites native coordinates.
-      // .13 passed structured positions through. Do not flatten an unknown
-      // native coordinate object merely to attach our independent CSS geometry.
-      const scalar = items.every(({ entry }) => entry && typeof entry === 'object' &&
-        (entry.position === undefined || Number.isFinite(entry.position)));
-      const positioned = scalar ? items.map((item, i) => ({ ...item.entry,
-        position:layout.positions[i].top, top:layout.positions[i].top, height:layout.heights[i] })) :
-        result.allItemsWithPositions;
+      // Like .13, keep native entries and coordinate schemas untouched.
+      const positioned = result.allItemsWithPositions;
       state.rendered = items.slice(slice.start, slice.end);
+      state.start = slice.start;
       schedule();
       return { ...result, allItemsWithPositions:positioned, newRenderedItems:positioned.slice(slice.start, slice.end),
         slice, arePreferredItemsRendered: true };
@@ -379,11 +358,6 @@ export function initMasonry({ read, write, permalink }) {
     if (document.querySelector('.xopt-masonry-container')) { if (active) release(); setStatus('active: external engine'); return; }
     const container = discover();
     if (active && active !== container) release();
-    if (container && rejected.has(container) && mismatchCommits.has(container) &&
-        mismatchCommits.get(container) !== commitSignature(container)) {
-      rejected.delete(container);
-      mismatchCommits.delete(container);
-    }
     if (!container || rejected.has(container)) {
       if (active) release();
       setStatus(container ? rejected.get(container) : 'waiting for feed');
@@ -412,12 +386,13 @@ export function initMasonry({ read, write, permalink }) {
       const slice = masonryWindow(layout, Math.max(0, -container.getBoundingClientRect().top), innerHeight);
       const wanted = slice && bridge.items.slice(slice.start, slice.end);
       if (!bridge.items.length || !wanted || wanted.length !== bridge.rendered.length ||
-          wanted.some((item, i) => item.key !== bridge.rendered[i].key)) refresh(bridge.scroller);
+          wanted.some((item, i) => item !== bridge.rendered[i])) refresh(bridge.scroller);
       if (rejected.has(container)) { release(); setStatus(rejected.get(container)); return; }
     }
     viewportDirty = false;
     const children = [...container.children];
     const width = container.clientWidth;
+    if (!Number.isFinite(width) || width <= 0) return;
     const columns = Math.max(1, Math.floor((width + 12) / 332));
     const cardWidth = (width - (columns - 1) * 12) / columns;
     const domCells = children.map((child) => {
@@ -429,63 +404,26 @@ export function initMasonry({ read, write, permalink }) {
       const item = { key:id ? `post:${id}` : url || Symbol('row'), fullRow:!post };
       return { child, item, id, post:!!post, postCount:posts.length, fullRow:!post };
     });
-    const cells = bridge ? matchMasonryCells(domCells, bridge.items, bridge.rendered) : domCells;
-    if (bridge && cells.some((cell) => !cell.item)) {
-      if (!bridge.commitDeadline) {
-        // A loading row can occupy an old post's slot before React commits.
-        // Give that ambiguity a fixed deadline, never a post-by-slot identity.
-        bridge.commitDeadline = Date.now() + COMMIT_GRACE_MS;
-        bridge.commitTimer = window.setTimeout(schedule, COMMIT_GRACE_MS);
-      }
-      if (Date.now() < bridge.commitDeadline) {
-        // React may still show the previous native commit after candidates have
-        // changed. Suspend only our CSS, keep the bridge for the pending commit,
-        // and use the same finite retry budget plus native DOM events.
-        const wasActive = container.classList.contains('xps-masonry-container');
-        resize.disconnect();
-        for (const child of observed) clearChild(child);
-        observed.clear();
-        container.classList.remove('xps-masonry-container');
-        container.style.removeProperty('--xps-feed-height');
-        for (const child of container.children) clearChild(child);
-        if (wasActive) document.dispatchEvent(new Event('xps-masonry-change'));
-        bridgeReason = 'waiting for native post commit (own permalink match missing)';
-        waitForBridge(container);
-        return;
-      }
-      // Unknown/ambiguous entry shapes or a mismatched native commit must not
-      // attach another entry's measurement/column to this DOM card.
-      const missing = cells.filter((cell) => !cell.item);
-      const sample = bridge.rendered.find((item) => item.anonymous || !item.post)?.entry ?? bridge.rendered[0]?.entry;
-      const type = (value) => value === undefined ? '-' : typeof value;
-      const fields = (value) => ['id', 'entryId', 'key'].map((key) => type(value?.[key])).join('/');
-      const shape = ` (all ${bridge.items.length}, rendered ${bridge.rendered.length}, children ${cells.length}, posts ${cells.filter((cell) => cell.post).length}, unmatched ${missing.filter((cell) => cell.post).length}/${missing.filter((cell) => !cell.post).length}; sample ${type(sample)}, item ${type(sample?.item)}, ids ${fields(sample?.item)}, wrapper ${fields(sample)}, position ${type(sample?.position)})`;
-      reject(container, `unsupported: own-post/native candidate identity mismatch${shape}`);
-      release();
-      // Releasing restores the native loading window and may commit fewer DOM
-      // children synchronously. That restoration is not evidence of recovery.
-      mismatchCommits.set(container, commitSignature(container));
-      setStatus(rejected.get(container));
-      return;
-    }
-    const items = bridge ? bridge.items : cells.map((cell) => cell.item);
-    if (new Set(items.map((item) => item.key)).size !== items.length) {
-      reject(container, 'unsupported: duplicate identity');
-      release();
-      return;
-    }
+    let cells = bridge ? matchMasonryCells(domCells, bridge.items, bridge.rendered) : domCells;
+    const local = !bridge || cells.some((cell) => !cell.item || typeof cell.item.key === 'symbol');
+    if (local && bridge) warn('Using estimated geometry and local card layout; unverified identities do not block masonry.');
+    // Visual placement needs only DOM geometry. Own permalinks are optional
+    // cache keys, never activation requirements or inferred shortcut targets.
+    const ids = new Map();
+    for (const cell of domCells) if (cell.id) ids.set(cell.id, (ids.get(cell.id) || 0) + 1);
+    if (local) cells = domCells.map((cell) => ({ ...cell, item:{
+      key:cell.id && ids.get(cell.id) === 1 ? `post:${cell.id}` : Symbol('unverified card'),
+      fullRow:cell.fullRow,
+    } }));
+    const items = local ? cells.map((cell) => cell.item) : bridge.items;
+    const renderer = local ? visualPlacement : placement;
     window.clearTimeout(retryTimer); retryTimer = 0;
     retryContainer = null; retryCount = 0;
-    if (bridge) {
-      window.clearTimeout(bridge.commitTimer);
-      bridge.commitTimer = 0;
-      bridge.commitDeadline = 0;
-    }
     if (!container.classList.contains('xps-masonry-container')) {
       container.classList.add('xps-masonry-container');
       document.dispatchEvent(new Event('xps-masonry-change'));
     }
-    placement.update(items, width);
+    renderer.update(items, width);
     let layoutChanged = false;
     const positionStyle = (node, name, value) => {
       if (node.style.getPropertyValue(name) === value) return;
@@ -507,22 +445,34 @@ export function initMasonry({ read, write, permalink }) {
     cells.forEach(({ child, item, fullRow }) => {
       if (!item) return;
       const height = Math.ceil(child.getBoundingClientRect().height);
-      placement.measure(item.key, height, width, fullRow);
+      if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow);
     });
-    const layout = placement.update(items, width);
-    const geometryChanged = bridge && (layout.positions.length !== bridge.geometry.positions.length ||
+    const layout = renderer.update(items, width);
+    // Unverified windows have no persistent per-post measurements. Use their
+    // current card-height average to keep native window estimates useful even
+    // when the site's original one-column heights differ greatly at this width.
+    const cardHeights = local && bridge ? cells.filter((cell) => !cell.fullRow)
+      .map(({ child }) => Math.ceil(child.getBoundingClientRect().height)).filter((height) => height > 0 && Number.isFinite(height)) : [];
+    const estimate = cardHeights.length ? Math.ceil(cardHeights.reduce((sum, height) => sum + height, 0) / cardHeights.length) : null;
+    const estimateChanged = estimate !== null && bridge.estimatedHeight !== estimate;
+    if (estimateChanged) bridge.estimatedHeight = estimate;
+    const geometryChanged = bridge && !local && (layout.positions.length !== bridge.geometry.positions.length ||
       layout.positions.some((p, i) => p.top !== bridge.geometry.positions[i].top || layout.heights[i] !== bridge.geometry.heights[i]));
+    const offset = local && bridge ? Math.min(...bridge.geometry.positions.slice(bridge.start,
+      bridge.start + bridge.rendered.length).map((p) => p.top), Infinity) : 0;
+    const top = Number.isFinite(offset) ? offset : 0;
     const positions = new Map(items.map((item, i) => [item.key, layout.positions[i]]));
     cells.forEach(({ child, item }) => {
       const position = item && positions.get(item.key);
       if (!position) return;
       positionStyle(child, '--xps-card-x', `${position.left}px`);
-      positionStyle(child, '--xps-card-y', `${position.top}px`);
+      positionStyle(child, '--xps-card-y', `${position.top + top}px`);
     });
-    positionStyle(container, '--xps-feed-height', `${layout.height}px`);
+    positionStyle(container, '--xps-feed-height', `${Math.max(layout.height + top,
+      local && bridge ? bridge.geometry.height : 0)}px`);
     setStatus('active');
     if (layoutChanged) document.dispatchEvent(new Event('xps-masonry-change'));
-    if (geometryChanged) refresh(bridge.scroller);
+    if (geometryChanged || estimateChanged) refresh(bridge.scroller);
     const remaining = container.getBoundingClientRect().bottom - innerHeight;
     if (bridge?.fetch && remaining < 1800) {
       const wait = 1200 - (Date.now() - lastFetch);

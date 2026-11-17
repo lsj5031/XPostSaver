@@ -90,19 +90,23 @@ Install **ONE script, X Post Saver**. Masonry is built in and **on by default**.
 Remove the separate X.com Masonry View script; reinstalling it is not required.
 The expanded bookmark panel has a **Masonry: On/Off** recovery control. Its
 separate `xpsMasonryEnabled` setting does not replace saved posts or settings.
-On means requested: the same control shows **active**, **waiting** (with the
-missing bridge/callback), or **unsupported** (with schema-only context).
+The control stays simply **Masonry: On** or **Masonry: Off**. On means requested;
+optional consistency diagnostics never block usable layout. Bridge/capability
+warnings and estimated-layout notices stay in the console, deduplicated and
+limited to eight messages per page session, not in the normal control.
 Missing React hydration gets a finite retry burst, then waits for feed changes,
 scroll, resize or navigation; toggling Off/On also retries. Unknown virtualizers
 remain native single-column, without forced CSS or unbounded rendered posts.
-The .15 adapter also accepts wrapper-owned/primitive native keys and preserves
-structured coordinate objects as .13 did. Anonymous or repeated loading-row
-labels do not disable known posts, but anonymous **posts** are never guessed from
-array order. A delayed native commit shows a waiting reason and resumes without
-requiring a toggle when its own-permalink identities become available.
+Version .17 restores .13's permissive native renderer bridge: raw entries and
+coordinate objects pass through unchanged. Missing own permalinks, unknown or
+conflicting candidate IDs, reordered placeholders and delayed commits do not
+block visual layout. Unverified windows use estimated native geometry and pack
+the actual DOM cards locally, without caching measurements by guessed identity.
+Cards without their own permalink simply have no shortcut badge or guessed URL.
 Newly placed posts choose the shortest column, with approximately 320px minimum
 widths. Once placed, a post keeps its column for the current feed and column
-count. Delayed image/quote growth moves downstream cards **within that column**,
+count when their identities are known. Unverified cards/windows may lose that
+sticky-column guarantee. Delayed image/quote growth moves downstream cards **within that column**,
 without repacking existing posts across columns or fixing/clipping their heights.
 Insertion, reorder and virtualized DOM replacement use own-post identities, not
 recycled indexes. Changing the number of columns or the feed route legitimately
@@ -115,14 +119,16 @@ The `unsafeWindow` grant accesses only the active timeline's React-scroller
 capabilities through the userscript manager, without inline CSP injection.
 Instance hooks are restored on route/disable/container replacement. Unsupported
 absolute virtualizers remain native instead of freezing their navigation.
-Rendering is windowed to at most 120 virtual items. Native candidate positions,
-rendered slices and feed height share the same synthetic layout. Unmeasured
-offscreen items are predictions until placed; replacing estimates can shift
-vertical positions, but not committed column assignments. Measurement history
+Rendering is windowed to at most 120 virtual items. Native candidate coordinates
+remain untouched; CSS placement and bounded slice selection use independent
+geometry. Unverified windows use a current measured card-height average for
+offscreen estimates. Replacing estimates can shift vertical positions.
+Known verified identities retain committed column assignments. Measurement history
 is capped at 2000 identities; small column records are retained only for the
 current native loaded list and pruned on removal, never for historical DOM.
-Ambiguous/missing native identities or an extreme layout that cannot cover all
-visible cards in one bounded native window fall back to native rendering.
+Only missing renderer capabilities, an unavailable native entry array or an extreme layout that
+cannot cover visible cards in one bounded native window require native fallback,
+not ambiguous/missing post identities.
 Native quotes are neither moved nor reconstructed.
 
 When a connected masonry timeline is active, landscape windows
@@ -232,7 +238,7 @@ Rendering details:
 
 ## Installation
 
-Current userscript release: **0.5.16**. See [changelog](CHANGELOG.md).
+Current userscript release: **0.5.17**. See [changelog](CHANGELOG.md).
 
 ### Userscript
 
