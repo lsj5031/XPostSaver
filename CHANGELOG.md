@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.16
+
+- Match explicit tweet identities across native item/list wrapper fields rather
+  than letting a list/promoted key hide the post ID; refuse conflicting post IDs.
+- Match loading rows independently of DOM child indexes, with unique or
+  own-post-bracketed association. Ambiguous or duplicate DOM commits stay native.
+- Bound every unmatched commit to six seconds, restore native methods on fallback,
+  and retry when the DOM identity/count/order changes, without idle polling.
+- Show candidate/DOM counts and sampled field types in fallback status, never
+  identifiers or post content. A primitive cursor sample is not a post schema.
+- Reproduce the exact .15 all-dash rejection offline and compare the same modeled
+  fixture against .13 and fixed source/bundle. Live Tampermonkey remains unverified.
+
 ## 0.5.15
 
 - Recover from an initially missing React bridge on the same feed container with

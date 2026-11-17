@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.15
+// @version      0.5.16
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1312,7 +1312,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   function masonryEntry(entry) {
     const item = entry?.item ?? entry;
     const valid = /* @__PURE__ */ __name((value) => ["string", "number"].includes(typeof value) && String(value).trim() !== "" && (typeof value !== "number" || Number.isFinite(value)), "valid");
-    const id = [
+    const ids = [
       item?.id,
       item?.entryId,
       item?.key,
@@ -1320,9 +1320,12 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       entry?.entryId,
       entry?.key,
       typeof item === "object" ? void 0 : item
-    ].find(valid);
+    ].filter(valid);
+    const id = ids[0];
     if (id === void 0) return null;
-    const post = /^(?:tweet-|post-)?(\d+)$/.exec(String(id))?.[1];
+    const posts = new Set(ids.map((id2) => /^(?:tweet-|post-)?(\d+)$/.exec(String(id2))?.[1]).filter(Boolean));
+    if (posts.size > 1) return null;
+    const post = [...posts][0];
     return {
       key: post ? `post:${post}` : `entry:${id}`,
       post,
@@ -1331,6 +1334,30 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     };
   }
   __name(masonryEntry, "masonryEntry");
+  function matchMasonryCells(cells, items, rendered) {
+    const byPost = new Map(items.filter((item) => item.post).map((item) => [item.post, item]));
+    const matched = cells.map((cell) => ({ ...cell, item: cell.post ? byPost.get(cell.id) : null }));
+    const rows = rendered.filter((item) => !item.post);
+    const nonPosts = matched.filter((cell) => !cell.post);
+    matched.forEach((cell, i) => {
+      if (cell.post) return;
+      if (rows.length === 1 && nonPosts.length === 1) {
+        cell.item = rows[0];
+        return;
+      }
+      const before = matched.slice(0, i).findLast((cell2) => cell2.post);
+      const after = matched.slice(i + 1).find((cell2) => cell2.post);
+      const start = before ? rendered.indexOf(before.item) : -1;
+      const end = after ? rendered.indexOf(after.item) : rendered.length;
+      if (before && start < 0 || end < 0 || start >= end) return;
+      const between = rendered.slice(start + 1, end).filter((item) => !item.post);
+      if (between.length === 1) cell.item = between[0];
+    });
+    const counts = /* @__PURE__ */ new Map();
+    for (const cell of matched) if (cell.item) counts.set(cell.item.key, (counts.get(cell.item.key) || 0) + 1);
+    return matched.map((cell) => counts.get(cell.item?.key) > 1 || cell.postCount > 1 ? { ...cell, item: null } : cell);
+  }
+  __name(matchMasonryCells, "matchMasonryCells");
   function masonryWindow(layout, top, height) {
     const visible2 = [], near = [];
     layout.positions.forEach((p, i) => {
@@ -1364,6 +1391,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     let placement = createMasonryLayout();
     let activeRoute = "";
     let rejected = /* @__PURE__ */ new WeakMap();
+    const mismatchCommits = /* @__PURE__ */ new WeakMap();
     let status = "waiting for feed";
     let retryContainer = null, retryCount = 0, retryTimer = 0;
     let bridgeReason = "waiting for React bridge";
@@ -1397,6 +1425,13 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       schedule();
     }
     __name(wake, "wake");
+    function commitSignature(container) {
+      return [...container.children].map((child) => {
+        const posts = child.matches(POST) ? [child] : outerPosts(child);
+        return posts.length ? posts.map((post) => permalink(post) || "?").join("|") : "-";
+      }).join(",");
+    }
+    __name(commitSignature, "commitSignature");
     const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
     const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
     function release() {
@@ -1546,7 +1581,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           reject(container, "unsupported: visible window exceeds safe limit");
           return result;
         }
-        const scalar = items.every(({ entry }) => entry.position === void 0 || Number.isFinite(entry.position));
+        const scalar = items.every(({ entry }) => entry && typeof entry === "object" && (entry.position === void 0 || Number.isFinite(entry.position)));
         const positioned = scalar ? items.map((item, i) => ({
           ...item.entry,
           position: layout.positions[i].top,
@@ -1602,6 +1637,10 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       }
       const container = discover();
       if (active && active !== container) release();
+      if (container && rejected.has(container) && mismatchCommits.has(container) && mismatchCommits.get(container) !== commitSignature(container)) {
+        rejected.delete(container);
+        mismatchCommits.delete(container);
+      }
       if (!container || rejected.has(container)) {
         if (active) release();
         setStatus(container ? rejected.get(container) : "waiting for feed");
@@ -1650,22 +1689,21 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       const width = container.clientWidth;
       const columns = Math.max(1, Math.floor((width + 12) / 332));
       const cardWidth = (width - (columns - 1) * 12) / columns;
-      const byPost = new Map((bridge?.items || []).filter((item) => item.post).map((item) => [item.post, item]));
-      const cells = children.map((child, i) => {
-        const post = child.matches(POST) ? child : outerPosts(child)[0];
+      const domCells = children.map((child) => {
+        const posts = child.matches(POST) ? [child] : outerPosts(child);
+        const post = posts[0];
         const url = post && permalink(post);
         const id = url && /\/status\/(\d+)/.exec(url)?.[1];
-        const row = bridge?.rendered[i];
-        const item = bridge ? post ? byPost.get(id) : row && !row.post ? row : null : { key: id ? `post:${id}` : url || /* @__PURE__ */ Symbol("row"), fullRow: !post };
-        return { child, item, row, fullRow: !post };
+        const item = { key: id ? `post:${id}` : url || /* @__PURE__ */ Symbol("row"), fullRow: !post };
+        return { child, item, id, post: !!post, postCount: posts.length, fullRow: !post };
       });
+      const cells = bridge ? matchMasonryCells(domCells, bridge.items, bridge.rendered) : domCells;
       if (bridge && cells.some((cell) => !cell.item)) {
-        const knownPostCommit = cells.filter((cell) => !cell.item).every((cell) => !cell.row || cell.row.post);
-        if (!knownPostCommit && !bridge.commitDeadline) {
+        if (!bridge.commitDeadline) {
           bridge.commitDeadline = Date.now() + COMMIT_GRACE_MS;
           bridge.commitTimer = window.setTimeout(schedule, COMMIT_GRACE_MS);
         }
-        if (knownPostCommit || Date.now() < bridge.commitDeadline) {
+        if (Date.now() < bridge.commitDeadline) {
           const wasActive = container.classList.contains("xps-masonry-container");
           resize.disconnect();
           for (const child of observed) clearChild(child);
@@ -1678,12 +1716,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           waitForBridge(container);
           return;
         }
-        const sample = bridge.rendered.find((item) => item.anonymous || !item.post)?.entry;
+        const missing = cells.filter((cell) => !cell.item);
+        const sample = bridge.rendered.find((item) => item.anonymous || !item.post)?.entry ?? bridge.rendered[0]?.entry;
         const type = /* @__PURE__ */ __name((value) => value === void 0 ? "-" : typeof value, "type");
         const fields = /* @__PURE__ */ __name((value) => ["id", "entryId", "key"].map((key) => type(value?.[key])).join("/"), "fields");
-        const shape = sample ? ` (item ${type(sample.item)}, ids ${fields(sample.item)}, wrapper ${fields(sample)}, position ${type(sample.position)})` : "";
+        const shape = ` (all ${bridge.items.length}, rendered ${bridge.rendered.length}, children ${cells.length}, posts ${cells.filter((cell) => cell.post).length}, unmatched ${missing.filter((cell) => cell.post).length}/${missing.filter((cell) => !cell.post).length}; sample ${type(sample)}, item ${type(sample?.item)}, ids ${fields(sample?.item)}, wrapper ${fields(sample)}, position ${type(sample?.position)})`;
         reject(container, `unsupported: own-post/native candidate identity mismatch${shape}`);
         release();
+        mismatchCommits.set(container, commitSignature(container));
         setStatus(rejected.get(container));
         return;
       }

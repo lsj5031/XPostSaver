@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { createMasonryLayout, masonryEntry, masonryPositions, masonryWindow, outerPosts } from '../src/masonry.js';
+import { createMasonryLayout, masonryEntry, matchMasonryCells, masonryPositions, masonryWindow, outerPosts } from '../src/masonry.js';
 
 describe('standalone masonry', () => {
   it('packs unequal heights into the shortest column with no empty row cells', () => {
@@ -129,5 +129,33 @@ describe('identity-stable masonry placement', () => {
     expect(masonryWindow({ positions:[], heights:[] }, 0, 900)).toEqual({ start:0, end:0 });
     const extreme = { positions:Array.from({ length:150 }, () => ({ top:0 })), heights:Array(150).fill(2000) };
     expect(masonryWindow(extreme, 1000, 900)).toBeNull();
+  });
+  it('separates explicit post IDs from list/promoted keys without guessing suffix IDs', () => {
+    expect(masonryEntry({ item:{ id:'promoted-tweet-12-ad' }, entryId:'tweet-12' }))
+      .toMatchObject({ key:'post:12', post:'12' });
+    expect(masonryEntry({ item:{ id:'list-row-12', entryId:'tweet-12' } }))
+      .toMatchObject({ key:'post:12', post:'12' });
+    expect(masonryEntry({ item:{ id:'tweet-99' }, entryId:'tweet-12' })).toBeNull();
+    expect(masonryEntry({ id:'promoted-tweet-12-ad' }).post).toBeUndefined();
+  });
+  it('matches reordered posts and a primitive cursor by identity, not child slots', () => {
+    const items = ['cursor-bottom', { item:{ id:'list-1' }, entryId:'tweet-1' },
+      { item:{ id:'tweet-2' } }].map(masonryEntry);
+    const cells = [{ post:true, id:'2' }, { post:true, id:'1' }, { post:false }];
+    expect(matchMasonryCells(cells, items, items).map((cell) => cell.item.key))
+      .toEqual(['post:2', 'post:1', 'entry:cursor-bottom']);
+    // A placeholder cannot borrow a known post's identity.
+    expect(matchMasonryCells(cells, items.slice(1), items.slice(1))[2].item).toBeNull();
+  });
+  it('requires unique row association and refuses duplicate DOM or candidate conflicts', () => {
+    const items = [{ id:'tweet-1' }, 'cursor-a', { id:'tweet-2' }, 'cursor-b', { id:'tweet-3' }].map(masonryEntry);
+    const cells = [{ post:true, id:'1' }, { post:false }, { post:true, id:'2' },
+      { post:false }, { post:true, id:'3' }];
+    expect(matchMasonryCells(cells, items, items).map((cell) => cell.item?.key)).toEqual(items.map((item) => item.key));
+    expect(matchMasonryCells([{ post:false }, { post:false }], items, items).every((cell) => !cell.item)).toBe(true);
+    expect(matchMasonryCells([{ post:true, id:'1' }, { post:true, id:'1' }], items, items)
+      .every((cell) => !cell.item)).toBe(true);
+    expect(matchMasonryCells([{ post:true, id:'1', postCount:2 }], items, items)[0].item).toBeNull();
+    expect(matchMasonryCells([{ post:true, id:'999' }], items, items)[0].item).toBeUndefined();
   });
 });

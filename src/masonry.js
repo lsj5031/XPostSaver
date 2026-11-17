@@ -89,12 +89,42 @@ export function masonryEntry(entry) {
     String(value).trim() !== '' && (typeof value !== 'number' || Number.isFinite(value));
   // Native wrappers can own the list identity while item owns the render data,
   // or item can itself be the list key. Position is not an identity field.
-  const id = [item?.id, item?.entryId, item?.key, entry?.id, entry?.entryId, entry?.key,
-    typeof item === 'object' ? undefined : item].find(valid);
+  const ids = [item?.id, item?.entryId, item?.key, entry?.id, entry?.entryId, entry?.key,
+    typeof item === 'object' ? undefined : item].filter(valid);
+  const id = ids[0];
   if (id === undefined) return null;
-  const post = /^(?:tweet-|post-)?(\d+)$/.exec(String(id))?.[1];
+  // List/promoted wrapper keys are not post IDs. A recognized own-post ID in
+  // another explicit identity field wins, but conflicting post IDs never do.
+  const posts = new Set(ids.map((id) => /^(?:tweet-|post-)?(\d+)$/.exec(String(id))?.[1]).filter(Boolean));
+  if (posts.size > 1) return null;
+  const post = [...posts][0];
   return { key:post ? `post:${post}` : `entry:${id}`, post, entry,
     height:Number.isFinite(entry.height) && entry.height > 0 ? entry.height : 320 };
+}
+
+export function matchMasonryCells(cells, items, rendered) {
+  const byPost = new Map(items.filter((item) => item.post).map((item) => [item.post, item]));
+  const matched = cells.map((cell) => ({ ...cell, item:cell.post ? byPost.get(cell.id) : null }));
+  const rows = rendered.filter((item) => !item.post);
+  const nonPosts = matched.filter((cell) => !cell.post);
+  // Non-post children have no permalink. Match a unique loading row, or a
+  // unique row bracketed by the same own-post identities, never rendered[i].
+  matched.forEach((cell, i) => {
+    if (cell.post) return;
+    if (rows.length === 1 && nonPosts.length === 1) { cell.item = rows[0]; return; }
+    const before = matched.slice(0, i).findLast((cell) => cell.post);
+    const after = matched.slice(i + 1).find((cell) => cell.post);
+    const start = before ? rendered.indexOf(before.item) : -1;
+    const end = after ? rendered.indexOf(after.item) : rendered.length;
+    if ((before && start < 0) || end < 0 || start >= end) return;
+    const between = rendered.slice(start + 1, end).filter((item) => !item.post);
+    if (between.length === 1) cell.item = between[0];
+  });
+  const counts = new Map();
+  for (const cell of matched) if (cell.item) counts.set(cell.item.key, (counts.get(cell.item.key) || 0) + 1);
+  // Multiple DOM cards for one candidate (or multiple posts in one cell) cannot
+  // safely own a measurement. Suspend the entire commit instead.
+  return matched.map((cell) => counts.get(cell.item?.key) > 1 || cell.postCount > 1 ? { ...cell, item:null } : cell);
 }
 
 export function masonryWindow(layout, top, height) {
@@ -132,6 +162,7 @@ export function initMasonry({ read, write, permalink }) {
   let placement = createMasonryLayout();
   let activeRoute = '';
   let rejected = new WeakMap();
+  const mismatchCommits = new WeakMap();
   let status = 'waiting for feed';
   let retryContainer = null, retryCount = 0, retryTimer = 0;
   let bridgeReason = 'waiting for React bridge';
@@ -154,6 +185,12 @@ export function initMasonry({ read, write, permalink }) {
   function wake() {
     if (!retryTimer) retryCount = 0;
     schedule();
+  }
+  function commitSignature(container) {
+    return [...container.children].map((child) => {
+      const posts = child.matches(POST) ? [child] : outerPosts(child);
+      return posts.length ? posts.map((post) => permalink(post) || '?').join('|') : '-';
+    }).join(',');
   }
   const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
   const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -297,7 +334,8 @@ export function initMasonry({ read, write, permalink }) {
       // Only the verified scalar geometry adapter rewrites native coordinates.
       // .13 passed structured positions through. Do not flatten an unknown
       // native coordinate object merely to attach our independent CSS geometry.
-      const scalar = items.every(({ entry }) => entry.position === undefined || Number.isFinite(entry.position));
+      const scalar = items.every(({ entry }) => entry && typeof entry === 'object' &&
+        (entry.position === undefined || Number.isFinite(entry.position)));
       const positioned = scalar ? items.map((item, i) => ({ ...item.entry,
         position:layout.positions[i].top, top:layout.positions[i].top, height:layout.heights[i] })) :
         result.allItemsWithPositions;
@@ -341,6 +379,11 @@ export function initMasonry({ read, write, permalink }) {
     if (document.querySelector('.xopt-masonry-container')) { if (active) release(); setStatus('active: external engine'); return; }
     const container = discover();
     if (active && active !== container) release();
+    if (container && rejected.has(container) && mismatchCommits.has(container) &&
+        mismatchCommits.get(container) !== commitSignature(container)) {
+      rejected.delete(container);
+      mismatchCommits.delete(container);
+    }
     if (!container || rejected.has(container)) {
       if (active) release();
       setStatus(container ? rejected.get(container) : 'waiting for feed');
@@ -377,27 +420,24 @@ export function initMasonry({ read, write, permalink }) {
     const width = container.clientWidth;
     const columns = Math.max(1, Math.floor((width + 12) / 332));
     const cardWidth = (width - (columns - 1) * 12) / columns;
-    const byPost = new Map((bridge?.items || []).filter((item) => item.post).map((item) => [item.post, item]));
-    const cells = children.map((child, i) => {
-      const post = child.matches(POST) ? child : outerPosts(child)[0];
+    const domCells = children.map((child) => {
+      const posts = child.matches(POST) ? [child] : outerPosts(child);
+      const post = posts[0];
       const url = post && permalink(post);
       const id = url && /\/status\/(\d+)/.exec(url)?.[1];
-      // Match posts by own identity even if React has not committed the requested
-      // slice yet. The positional fallback is for non-post loading rows only.
-      const row = bridge?.rendered[i];
-      const item = bridge ? (post ? byPost.get(id) : row && !row.post ? row : null) :
-        { key:id ? `post:${id}` : url || Symbol('row'), fullRow:!post };
-      return { child, item, row, fullRow:!post };
+      // Match posts by own identity even if React has not committed the requested slice yet.
+      const item = { key:id ? `post:${id}` : url || Symbol('row'), fullRow:!post };
+      return { child, item, id, post:!!post, postCount:posts.length, fullRow:!post };
     });
+    const cells = bridge ? matchMasonryCells(domCells, bridge.items, bridge.rendered) : domCells;
     if (bridge && cells.some((cell) => !cell.item)) {
-      const knownPostCommit = cells.filter((cell) => !cell.item).every((cell) => !cell.row || cell.row.post);
-      if (!knownPostCommit && !bridge.commitDeadline) {
+      if (!bridge.commitDeadline) {
         // A loading row can occupy an old post's slot before React commits.
         // Give that ambiguity a fixed deadline, never a post-by-slot identity.
         bridge.commitDeadline = Date.now() + COMMIT_GRACE_MS;
         bridge.commitTimer = window.setTimeout(schedule, COMMIT_GRACE_MS);
       }
-      if (knownPostCommit || Date.now() < bridge.commitDeadline) {
+      if (Date.now() < bridge.commitDeadline) {
         // React may still show the previous native commit after candidates have
         // changed. Suspend only our CSS, keep the bridge for the pending commit,
         // and use the same finite retry budget plus native DOM events.
@@ -415,12 +455,16 @@ export function initMasonry({ read, write, permalink }) {
       }
       // Unknown/ambiguous entry shapes or a mismatched native commit must not
       // attach another entry's measurement/column to this DOM card.
-      const sample = bridge.rendered.find((item) => item.anonymous || !item.post)?.entry;
+      const missing = cells.filter((cell) => !cell.item);
+      const sample = bridge.rendered.find((item) => item.anonymous || !item.post)?.entry ?? bridge.rendered[0]?.entry;
       const type = (value) => value === undefined ? '-' : typeof value;
       const fields = (value) => ['id', 'entryId', 'key'].map((key) => type(value?.[key])).join('/');
-      const shape = sample ? ` (item ${type(sample.item)}, ids ${fields(sample.item)}, wrapper ${fields(sample)}, position ${type(sample.position)})` : '';
+      const shape = ` (all ${bridge.items.length}, rendered ${bridge.rendered.length}, children ${cells.length}, posts ${cells.filter((cell) => cell.post).length}, unmatched ${missing.filter((cell) => cell.post).length}/${missing.filter((cell) => !cell.post).length}; sample ${type(sample)}, item ${type(sample?.item)}, ids ${fields(sample?.item)}, wrapper ${fields(sample)}, position ${type(sample?.position)})`;
       reject(container, `unsupported: own-post/native candidate identity mismatch${shape}`);
       release();
+      // Releasing restores the native loading window and may commit fewer DOM
+      // children synchronously. That restoration is not evidence of recovery.
+      mismatchCommits.set(container, commitSignature(container));
       setStatus(rejected.get(container));
       return;
     }

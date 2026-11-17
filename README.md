@@ -232,7 +232,7 @@ Rendering details:
 
 ## Installation
 
-Current userscript release: **0.5.15**. See [changelog](CHANGELOG.md).
+Current userscript release: **0.5.16**. See [changelog](CHANGELOG.md).
 
 ### Userscript
 
