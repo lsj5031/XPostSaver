@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.13
+// @version      0.5.14
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1041,21 +1041,38 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     return [event.target, document.activeElement, ...event.composedPath?.() || []].some((node) => node instanceof Element && node.closest(SHORTCUT_CONTROLS));
   }
   __name(isShortcutControl, "isShortcutControl");
+  var prefixUntil = 0;
+  var prefixEvents = /* @__PURE__ */ new WeakMap();
+  function isNativeShortcutSequence(event) {
+    if (prefixEvents.has(event)) return prefixEvents.get(event);
+    let native = false;
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !isShortcutControl(event)) {
+      if (["g", "a"].includes(event.key)) {
+        prefixUntil = Date.now() + 1500;
+        native = true;
+      } else if (Date.now() < prefixUntil && event.key.length === 1) {
+        if (!event.repeat) prefixUntil = 0;
+        native = true;
+      }
+    }
+    prefixEvents.set(event, native);
+    return native;
+  }
+  __name(isNativeShortcutSequence, "isNativeShortcutSequence");
 
   // src/masonry-hints.js
   function initMasonryHints({ permalink, eligible, openBackground }) {
     if (typeof document.elementFromPoint !== "function") return;
-    const keys = "1234567890";
+    const keys = "1234567890deqyz";
     const layer = document.createElement("div");
     layer.id = "xps-masonry-keys";
     layer.setAttribute("aria-hidden", "true");
     layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:3";
-    let snapshot = null;
+    const assignments = /* @__PURE__ */ new Map();
     let route = location.href;
-    let timer = 0;
-    let prefixUntil = 0;
+    let frame = 0;
     const observed = /* @__PURE__ */ new Set();
-    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(() => invalidate()) : null;
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
     function feed() {
       if (document.hidden || /\/status\/\d+(?:\/|$)/.test(location.pathname) || document.documentElement.classList.contains("xopt-status-detail") || document.querySelector(".xps-nav-open")) return null;
       const layers = document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"], [data-testid="Dropdown"], [popover]:popover-open');
@@ -1107,24 +1124,16 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           if (patch) break;
         }
         if (!patch) continue;
-        const links = [...card.querySelectorAll('a[href*="/status/"]')].map((anchor) => [anchor, anchor.getAttribute("href")]);
-        result.push({ card, source, url, links, rect: [rect.left, rect.top, rect.right, rect.bottom], patch });
+        result.push({ card, source, url, rect: [rect.left, rect.top, rect.right, rect.bottom], patch });
       }
       return result.sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
     }
     __name(cards, "cards");
-    function same(a, b) {
-      return a !== null && a.length === b.length && a.every((entry, index) => {
-        const next = b[index];
-        return entry.card === next.card && entry.source === next.source && entry.url === next.url && entry.links.length === next.links.length && entry.links.every(([anchor, href], i) => anchor === next.links[i][0] && href === next.links[i][1]) && entry.rect.every((n, i) => n === next.rect[i]) && entry.patch.every((n, i) => n === next.patch[i]);
-      });
+    function remove(card) {
+      assignments.get(card)?.badge.remove();
+      assignments.delete(card);
     }
-    __name(same, "same");
-    function clear() {
-      snapshot = null;
-      if (layer.childNodes.length) layer.replaceChildren();
-    }
-    __name(clear, "clear");
+    __name(remove, "remove");
     function observe(entries) {
       const source = feed();
       const wanted = new Set(source ? [source, source.closest('[data-testid="primaryColumn"]'), ...entries.map((entry) => entry.card)] : []);
@@ -1138,80 +1147,80 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       }
     }
     __name(observe, "observe");
-    function invalidate() {
-      clear();
-      window.clearTimeout(timer);
-      timer = 0;
-      route = location.href;
-      if (!feed()) {
-        observe([]);
-        return;
+    function reconcile() {
+      frame = 0;
+      if (route !== location.href) {
+        for (const card of assignments.keys()) remove(card);
       }
-      timer = window.setTimeout(() => {
-        const before = cards();
-        timer = window.setTimeout(() => {
-          timer = 0;
-          const after = cards();
-          if (route !== location.href || !same(before, after)) {
-            invalidate();
-            return;
-          }
-          observe(after);
-          snapshot = after;
-          if (!after.length) return;
+      route = location.href;
+      const current = cards();
+      const byCard = new Map(current.map((entry) => [entry.card, entry]));
+      for (const [card, entry] of assignments) {
+        const next = byCard.get(card);
+        if (!next || next.url !== entry.url || next.source !== entry.source) remove(card);
+      }
+      const available = [...keys].filter((key) => ![...assignments.values()].some((entry) => entry.key === key));
+      for (const entry of current) {
+        let assigned = assignments.get(entry.card);
+        if (!assigned) {
+          const key = available.shift();
+          if (!key) continue;
+          const badge = document.createElement("span");
+          badge.className = "xps-masonry-key";
+          badge.textContent = key;
+          badge.dataset.url = entry.url;
+          badge.style.cssText = "position:absolute;width:28px;height:28px;box-sizing:border-box;text-align:center;border:1px solid white;border-radius:5px;background:#202020;color:white;font:bold 16px/26px monospace;pointer-events:none;box-shadow:0 1px 4px #0008";
+          assigned = { ...entry, key, badge };
+          assignments.set(entry.card, assigned);
           if (!layer.isConnected) document.body.append(layer);
-          after.slice(0, keys.length).forEach((entry, i) => {
-            const badge = document.createElement("span");
-            badge.className = "xps-masonry-key";
-            badge.textContent = keys[i];
-            badge.dataset.url = entry.url;
-            badge.style.cssText = `position:absolute;left:${entry.patch[0]}px;top:${entry.patch[1]}px;width:28px;height:28px;box-sizing:border-box;text-align:center;border:1px solid white;border-radius:5px;background:#202020;color:white;font:bold 16px/26px monospace;pointer-events:none;box-shadow:0 1px 4px #0008`;
-            layer.append(badge);
-          });
-        }, 80);
-      }, 100);
+          layer.append(badge);
+        }
+        const [x, y] = entry.patch;
+        if (assigned.badge.style.left !== `${x}px`) assigned.badge.style.left = `${x}px`;
+        if (assigned.badge.style.top !== `${y}px`) assigned.badge.style.top = `${y}px`;
+      }
+      observe(current);
     }
-    __name(invalidate, "invalidate");
+    __name(reconcile, "reconcile");
+    function schedule() {
+      if (assignments.size && (route !== location.href || !feed())) {
+        for (const card of assignments.keys()) remove(card);
+      }
+      if (!frame) frame = requestAnimationFrame(reconcile);
+    }
+    __name(schedule, "schedule");
     new MutationObserver((records) => {
       if (records.every((record) => layer.contains(record.target) || record.type === "childList" && [...record.addedNodes, ...record.removedNodes].every((node) => node === layer))) return;
-      if (route === location.href && snapshot !== null && same(snapshot, cards())) return;
-      if (timer && route === location.href) return;
-      invalidate();
+      schedule();
     }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style", "href", "hidden", "inert", "aria-hidden", "aria-modal", "role"] });
-    window.addEventListener("scroll", invalidate, true);
-    window.addEventListener("resize", invalidate);
-    window.addEventListener("popstate", invalidate);
-    window.addEventListener("hashchange", invalidate);
-    window.navigation?.addEventListener("currententrychange", invalidate);
-    document.addEventListener("visibilitychange", invalidate);
-    document.addEventListener("xps-navigation-change", invalidate);
-    document.addEventListener("xps-masonry-change", invalidate);
-    document.fonts?.addEventListener("loadingdone", invalidate);
-    for (const name of ["load", "transitionrun", "transitionend", "animationstart", "animationend"]) document.addEventListener(name, invalidate, true);
+    window.addEventListener("scroll", schedule, true);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("popstate", schedule);
+    window.addEventListener("hashchange", schedule);
+    window.navigation?.addEventListener("currententrychange", schedule);
+    document.addEventListener("visibilitychange", schedule);
+    document.addEventListener("xps-navigation-change", schedule);
+    document.addEventListener("xps-masonry-change", schedule);
+    document.fonts?.addEventListener("loadingdone", schedule);
+    document.addEventListener("load", (event) => {
+      if (event.target instanceof Element && feed()?.contains(event.target)) schedule();
+    }, true);
     document.addEventListener("keydown", (event) => {
-      if (event.key === "g" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !isShortcutControl(event)) {
-        prefixUntil = Date.now() + 1e3;
-        return;
-      }
-      if (Date.now() < prefixUntil && event.key.length === 1) {
-        prefixUntil = 0;
-        return;
-      }
+      if (isNativeShortcutSequence(event)) return;
       if (!keys.includes(event.key) || event.key.length !== 1 || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || isShortcutControl(event) || [event.target, document.activeElement].some((node) => node instanceof Element && node.closest('nav, header[role="banner"], [role="menu"], .xps-nav-toggle'))) return;
-      const current = cards();
-      if (route !== location.href || !same(snapshot, current)) {
-        invalidate();
+      const entry = [...assignments.values()].find((assigned) => assigned.key === event.key);
+      const valid = route === location.href && entry && cards().some((current) => current.card === entry.card && current.source === entry.source && current.url === entry.url);
+      if (!valid) {
+        if (entry) remove(entry.card);
+        schedule();
         return;
       }
-      const index = keys.indexOf(event.key);
-      const entry = snapshot?.[index];
-      if (!entry || !feed()) return;
       if (openBackground(entry.url)) {
         event.preventDefault();
         event.stopImmediatePropagation();
       }
     }, true);
-    invalidate();
+    schedule();
   }
   __name(initMasonryHints, "initMasonryHints");
 
@@ -1228,8 +1237,9 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     });
   }
   __name(outerPosts, "outerPosts");
-  function masonryPositions(heights, columns, width, gap = 12, fullRows = /* @__PURE__ */ new Set()) {
+  function masonryPositions(heights, columns, width, gap = 12, fullRows = /* @__PURE__ */ new Set(), assigned = []) {
     const bottoms = Array(columns).fill(0);
+    const placed = [];
     const cardWidth = (width - gap * (columns - 1)) / columns;
     const positions = heights.map((height, index) => {
       if (fullRows.has(index)) {
@@ -1237,15 +1247,97 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         if (height) bottoms.fill(top2 + height + gap);
         return { top: top2, left: 0, width };
       }
-      const column = bottoms.indexOf(Math.min(...bottoms));
+      const column = Number.isInteger(assigned[index]) && assigned[index] >= 0 && assigned[index] < columns ? assigned[index] : bottoms.indexOf(Math.min(...bottoms));
+      placed[index] = column;
       const top = bottoms[column];
       if (height) bottoms[column] += height + gap;
       return { top, left: column * (cardWidth + gap), width: cardWidth };
     });
-    return { positions, height: Math.max(0, ...bottoms) };
+    return { positions, height: Math.max(0, ...bottoms), columns: placed };
   }
   __name(masonryPositions, "masonryPositions");
-  function initMasonry({ read, write }) {
+  function createMasonryLayout() {
+    const placements = /* @__PURE__ */ new Map(), measurements = /* @__PURE__ */ new Map();
+    let count = 0;
+    return {
+      update(items, width) {
+        const columns = Math.max(1, Math.floor((width + 12) / 332));
+        if (columns !== count) {
+          for (const placed of placements.values()) placed.column = void 0;
+          count = columns;
+        }
+        const wanted = new Set(items.map((item) => item.key));
+        for (const key of placements.keys()) if (!wanted.has(key)) placements.delete(key);
+        for (const key of measurements.keys()) if (!wanted.has(key)) measurements.delete(key);
+        const fullRows = /* @__PURE__ */ new Set();
+        const heights = items.map((item, i) => {
+          if (measurements.get(item.key)?.fullRow ?? placements.get(item.key)?.fullRow ?? item.fullRow) fullRows.add(i);
+          return measurements.get(item.key)?.height ?? item.height ?? 320;
+        });
+        const layout = masonryPositions(
+          heights,
+          columns,
+          width,
+          12,
+          fullRows,
+          items.map((item) => placements.get(item.key)?.column)
+        );
+        items.forEach((item, i) => {
+          const committed = placements.get(item.key)?.committed || measurements.has(item.key);
+          placements.set(item.key, {
+            column: committed ? layout.columns[i] : void 0,
+            fullRow: fullRows.has(i),
+            committed
+          });
+        });
+        return { ...layout, heights };
+      },
+      measure(key, height, width, fullRow) {
+        const before = measurements.get(key), placed = placements.get(key);
+        const changed = before?.height !== height || before?.width !== width || placed?.fullRow !== fullRow;
+        if (placed && placed.fullRow !== fullRow) {
+          placed.fullRow = fullRow;
+          placed.column = void 0;
+        }
+        measurements.delete(key);
+        measurements.set(key, { height, width, fullRow });
+        while (measurements.size > 2e3) measurements.delete(measurements.keys().next().value);
+        return changed;
+      },
+      size: /* @__PURE__ */ __name(() => ({ placements: placements.size, measurements: measurements.size }), "size")
+    };
+  }
+  __name(createMasonryLayout, "createMasonryLayout");
+  function masonryEntry(entry) {
+    const item = entry?.item ?? entry;
+    const id = item?.id ?? item?.entryId ?? item?.key;
+    if (!["string", "number"].includes(typeof id) || String(id).trim() === "" || typeof id === "number" && !Number.isFinite(id) || entry.position !== void 0 && !Number.isFinite(entry.position)) return null;
+    const post = /^(?:tweet-|post-)?(\d+)$/.exec(String(id))?.[1];
+    return {
+      key: post ? `post:${post}` : `entry:${id}`,
+      post,
+      entry,
+      height: Number.isFinite(entry.height) && entry.height > 0 ? entry.height : 320
+    };
+  }
+  __name(masonryEntry, "masonryEntry");
+  function masonryWindow(layout, top, height) {
+    const visible2 = [], near = [];
+    layout.positions.forEach((p, i) => {
+      const bottom = p.top + layout.heights[i];
+      if (bottom >= top && p.top <= top + height) visible2.push(i);
+      if (bottom >= top - 800 && p.top <= top + height + 800) near.push(i);
+    });
+    const indices = visible2.length ? visible2 : near;
+    let start = indices.length ? indices[0] : Math.max(0, layout.positions.length - LIMIT);
+    const last = indices.at(-1) ?? start;
+    if (last - start >= LIMIT) return null;
+    if (near.length && last - near[0] < LIMIT) start = near[0];
+    const end = Math.min(layout.positions.length, Math.max(last + 1, start + LIMIT));
+    return { start, end };
+  }
+  __name(masonryWindow, "masonryWindow");
+  function initMasonry({ read, write, permalink }) {
     const style = document.createElement("style");
     style.textContent = masonry_default;
     document.head.append(style);
@@ -1254,14 +1346,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     let active = null;
     let bridge = null;
     let timer = 0;
-    let lastPath = location.pathname;
+    let lastRoute = location.pathname + location.search;
     let lastFetch = 0;
     let fetchTimer = 0;
     let viewportDirty = true;
     const observed = /* @__PURE__ */ new Set();
-    const sizes = /* @__PURE__ */ new Map();
-    const fullRows = /* @__PURE__ */ new Set();
-    const rejected = /* @__PURE__ */ new WeakSet();
+    let placement = createMasonryLayout();
+    let activeRoute = "";
+    let rejected = /* @__PURE__ */ new WeakSet();
     const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
     const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
     function release() {
@@ -1285,8 +1377,8 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         for (const child of active.children) clearChild(child);
       }
       active = null;
-      sizes.clear();
-      fullRows.clear();
+      placement = createMasonryLayout();
+      activeRoute = "";
       document.dispatchEvent(new Event("xps-masonry-change"));
       try {
         scroller?._handleScroll();
@@ -1345,7 +1437,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         if (!fetch && typeof props?.onNearEnd === "function") fetch = /* @__PURE__ */ __name(() => props.onNearEnd(), "fetch");
       }
       if (!scroller || !fetch || typeof scroller._handleScroll !== "function") return null;
-      const state = { scroller, fetch, originals: /* @__PURE__ */ new Map(), start: 0, total: 0 };
+      const state = { scroller, fetch, originals: /* @__PURE__ */ new Map(), items: [], rendered: [], geometry: { positions: [], heights: [] } };
       const replace = /* @__PURE__ */ __name((name, installed) => {
         state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
         scroller[name] = installed;
@@ -1359,20 +1451,37 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           schedule();
           return result;
         }
-        state.total = result.allItemsWithPositions.length;
+        const items = result.allItemsWithPositions.map(masonryEntry);
+        const posts = items.filter((item) => item?.post).map((item) => item.post);
+        if (items.some((item) => !item) || new Set(items.map((item) => item.key)).size !== items.length || new Set(posts).size !== posts.length) {
+          rejected.add(container);
+          schedule();
+          return result;
+        }
+        state.items = items;
         const width = container.clientWidth;
-        const columns = Math.max(1, Math.floor((width + 12) / 332));
-        const layout = masonryPositions(Array.from({ length: state.total }, (_, i) => sizes.get(i) ?? 320), columns, width, 12, fullRows);
+        const layout = placement.update(items, width);
+        state.geometry = layout;
         const y = Math.max(0, -container.getBoundingClientRect().top);
-        let start = layout.positions.findIndex((p, i) => p.top + (sizes.get(i) || 320) >= y - 800);
-        if (start < 0) start = Math.max(0, state.total - LIMIT);
-        const end = Math.min(state.total, start + LIMIT);
-        state.start = start;
+        const slice = masonryWindow(layout, y, innerHeight);
+        if (!slice) {
+          rejected.add(container);
+          schedule();
+          return result;
+        }
+        const positioned = items.map((item, i) => ({
+          ...item.entry,
+          position: layout.positions[i].top,
+          top: layout.positions[i].top,
+          height: layout.heights[i]
+        }));
+        state.rendered = items.slice(slice.start, slice.end);
         schedule();
         return {
           ...result,
-          newRenderedItems: result.allItemsWithPositions.slice(start, end),
-          slice: { start, end },
+          allItemsWithPositions: positioned,
+          newRenderedItems: positioned.slice(slice.start, slice.end),
+          slice,
           arePreferredItemsRendered: true
         };
       }, "candidates");
@@ -1393,12 +1502,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     __name(connect, "connect");
     function apply() {
       timer = 0;
-      lastPath = location.pathname;
-      const detail = /\/status\/\d+(?:\/|$)/.test(lastPath);
+      if (lastRoute !== location.pathname + location.search) rejected = /* @__PURE__ */ new WeakSet();
+      lastRoute = location.pathname + location.search;
+      const detail = /\/status\/\d+(?:\/|$)/.test(location.pathname);
       if (!enabled2 || detail || innerWidth < 700 || !resize) {
         if (active) release();
         return;
       }
+      if (active && activeRoute !== lastRoute) release();
       if (document.querySelector(".xopt-masonry-container")) {
         if (active) release();
         return;
@@ -1428,21 +1539,57 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           }
         }
         active = container;
+        activeRoute = lastRoute;
         active.classList.add("xps-masonry-container");
         document.dispatchEvent(new Event("xps-masonry-change"));
         viewportDirty = true;
       }
-      if (bridge && viewportDirty) refresh(bridge.scroller);
+      if (bridge && viewportDirty) {
+        const layout2 = placement.update(bridge.items, container.clientWidth);
+        const slice = masonryWindow(layout2, Math.max(0, -container.getBoundingClientRect().top), innerHeight);
+        const wanted2 = slice && bridge.items.slice(slice.start, slice.end);
+        if (!bridge.items.length || !wanted2 || wanted2.length !== bridge.rendered.length || wanted2.some((item, i) => item.key !== bridge.rendered[i].key)) refresh(bridge.scroller);
+        if (rejected.has(container)) {
+          release();
+          return;
+        }
+      }
       viewportDirty = false;
       const children = [...container.children];
       const width = container.clientWidth;
       const columns = Math.max(1, Math.floor((width + 12) / 332));
       const cardWidth = (width - (columns - 1) * 12) / columns;
+      const byPost = new Map((bridge?.items || []).filter((item) => item.post).map((item) => [item.post, item]));
+      const cells = children.map((child, i) => {
+        const post = child.matches(POST) ? child : outerPosts(child)[0];
+        const url = post && permalink(post);
+        const id = url && /\/status\/(\d+)/.exec(url)?.[1];
+        const row = bridge?.rendered[i];
+        const item = bridge ? post ? byPost.get(id) : row && !row.post ? row : null : { key: id ? `post:${id}` : url || /* @__PURE__ */ Symbol("row"), fullRow: !post };
+        return { child, item, fullRow: !post };
+      });
+      if (bridge && cells.some((cell) => !cell.item)) {
+        rejected.add(container);
+        release();
+        return;
+      }
+      const items = bridge ? bridge.items : cells.map((cell) => cell.item);
+      if (new Set(items.map((item) => item.key)).size !== items.length) {
+        rejected.add(container);
+        release();
+        return;
+      }
+      placement.update(items, width);
+      let layoutChanged = false;
+      const positionStyle = /* @__PURE__ */ __name((node, name, value) => {
+        if (node.style.getPropertyValue(name) === value) return;
+        node.style.setProperty(name, value);
+        layoutChanged = true;
+      }, "positionStyle");
       const wanted = /* @__PURE__ */ new Set();
-      children.forEach((child) => {
-        child.classList.add("xps-masonry-item");
-        const hasPost = child.matches(POST) || outerPosts(child).length > 0;
-        child.style.setProperty("--xps-card-width", `${hasPost ? cardWidth : width}px`);
+      cells.forEach(({ child, fullRow }) => {
+        if (!child.classList.contains("xps-masonry-item")) child.classList.add("xps-masonry-item");
+        positionStyle(child, "--xps-card-width", `${fullRow ? width : cardWidth}px`);
         wanted.add(child);
       });
       for (const child of observed) if (!wanted.has(child)) {
@@ -1454,32 +1601,23 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         observed.add(child);
         resize.observe(child);
       }
-      let changed = false;
-      const heights = children.map((child, i) => {
+      cells.forEach(({ child, item, fullRow }) => {
+        if (!item) return;
         const height = Math.ceil(child.getBoundingClientRect().height);
-        const index = (bridge?.start || 0) + i;
-        if (child.matches(POST) || outerPosts(child).length) fullRows.delete(index);
-        else fullRows.add(index);
-        if (sizes.get(index) !== height) {
-          sizes.set(index, height);
-          changed = true;
-        }
-        return height;
+        placement.measure(item.key, height, width, fullRow);
       });
-      while (sizes.size > 2e3) {
-        const key = sizes.keys().next().value;
-        sizes.delete(key);
-        fullRows.delete(key);
-      }
-      const layout = masonryPositions(bridge ? Array.from({ length: bridge.total }, (_, i) => sizes.get(i) ?? 320) : heights, columns, width, 12, fullRows);
-      children.forEach((child, i) => {
-        const position = layout.positions[(bridge?.start || 0) + i];
+      const layout = placement.update(items, width);
+      const geometryChanged = bridge && (layout.positions.length !== bridge.geometry.positions.length || layout.positions.some((p, i) => p.top !== bridge.geometry.positions[i].top || layout.heights[i] !== bridge.geometry.heights[i]));
+      const positions = new Map(items.map((item, i) => [item.key, layout.positions[i]]));
+      cells.forEach(({ child, item }) => {
+        const position = item && positions.get(item.key);
         if (!position) return;
-        child.style.setProperty("--xps-card-x", `${position.left}px`);
-        child.style.setProperty("--xps-card-y", `${position.top}px`);
+        positionStyle(child, "--xps-card-x", `${position.left}px`);
+        positionStyle(child, "--xps-card-y", `${position.top}px`);
       });
-      container.style.setProperty("--xps-feed-height", `${layout.height}px`);
-      if (bridge && changed) refresh(bridge.scroller);
+      positionStyle(container, "--xps-feed-height", `${layout.height}px`);
+      if (layoutChanged) document.dispatchEvent(new Event("xps-masonry-change"));
+      if (geometryChanged) refresh(bridge.scroller);
       const remaining = container.getBoundingClientRect().bottom - innerHeight;
       if (bridge?.fetch && remaining < 1800) {
         const wait = 1200 - (Date.now() - lastFetch);
@@ -1515,7 +1653,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     }, { passive: true });
     window.addEventListener("popstate", schedule);
     window.setInterval(() => {
-      if (lastPath !== location.pathname || !active?.isConnected) schedule();
+      if (lastRoute !== location.pathname + location.search || !active?.isConnected) schedule();
     }, 350);
     schedule();
     return {
@@ -2310,6 +2448,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   }
   __name(getFocusedShortcutPost, "getFocusedShortcutPost");
   function onPageScrollShortcut(event) {
+    if (isNativeShortcutSequence(event)) return;
     if (event.key !== " " || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
     if (event.target instanceof Element && event.target.closest(`#${UI.panelId} > .xps-panel-toggle, .xps-nav-header, .xps-nav-toggle`)) return;
     const controls2 = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, dialog, [role="dialog"], [role="alertdialog"]';
@@ -2325,6 +2464,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   }
   __name(onPageScrollShortcut, "onPageScrollShortcut");
   function onPostNavigationShortcut(event) {
+    if (isNativeShortcutSequence(event)) return;
     if (!["j", "k"].includes(event.key) || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
     if (isShortcutControl(event) || document.querySelector('dialog[open], [aria-modal="true"]')) return;
     const scope = document.querySelector('[data-testid="primaryColumn"]') || document.querySelector("main") || document;
@@ -2373,6 +2513,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   }
   __name(onPostNavigationShortcut, "onPostNavigationShortcut");
   function onPostShortcut(event) {
+    if (isNativeShortcutSequence(event)) return;
     const key = event.key.toLowerCase();
     const background = key === "w";
     if (!["w", "v", "c"].includes(key) || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat || event.defaultPrevented) return;
@@ -2981,7 +3122,11 @@ ${longform}`;
   function init() {
     if (window.self !== window.top) return;
     ensureStyles();
-    const masonry = initMasonry({ read: storageGet, write: storageSet });
+    const masonry = initMasonry({
+      read: storageGet,
+      write: storageSet,
+      permalink: /* @__PURE__ */ __name((article) => getTweetPermalink(article, { ownOnly: true }), "permalink")
+    });
     ensurePanel(masonry);
     initMasonryNavigation();
     initMasonryHints({

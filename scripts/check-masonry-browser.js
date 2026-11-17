@@ -75,7 +75,7 @@ async function settled(page, count = null) {
     const badges = document.querySelectorAll('.xps-masonry-key');
     return n === null ? badges.length > 0 : badges.length === n;
   }, count);
-  // Wait beyond both settlement samples / initial ResizeObserver delivery.
+  // Allow layout and initial ResizeObserver delivery.
   await page.waitForTimeout(300);
 }
 async function press(page, key, options = {}, selector = 'body') {
@@ -266,23 +266,25 @@ try {
           timeline.append(card);
         }
       });
-      await settled(page, 10);
+      await settled(page);
       await blur(page);
       const assigned = await badges(page);
       assert.ok(await page.locator('.timeline article').evaluateAll((cards) =>
         cards.filter((card) => {
           const r = card.getBoundingClientRect(); return r.top < innerHeight - 36 && r.bottom > 36;
         }).length > 10), 'visible cards exceed the ten-key pool');
-      assert.equal(assigned.map((entry) => entry.key).join(''), '1234567890');
+      const hintCount = assigned.length;
+      assert.ok(hintCount > 10 && hintCount <= 15);
+      assert.equal(assigned.map((entry) => entry.key).join(''), '1234567890deqyz'.slice(0, hintCount));
       assert.deepEqual(assigned.map((entry) => entry.url),
-        Array.from({ length:10 }, (_, i) => `https://x.com/fixture/status/${i+1}`), 'fixture visual rows map to own posts 1 through 10, not the quote');
+        Array.from({ length:hintCount }, (_, i) => `https://x.com/fixture/status/${i+1}`), 'fixture visual rows map to own posts in visual order, not the quote');
       const state = await page.evaluate(() => ({ focus:document.activeElement.tagName, x:scrollX, y:scrollY }));
       for (const [index, entry] of assigned.entries()) {
         if (index === 0) await page.keyboard.press(entry.key);
         else assert.equal(await press(page, entry.key), true);
         assert.deepEqual((await page.evaluate(() => window.tabCalls)).at(-1), { url:entry.url, options:{ active:false, insert:true, setParent:true } });
       }
-      assert.equal(await countCalls(page), 10);
+      assert.equal(await countCalls(page), hintCount);
       assert.deepEqual(await badges(page), assigned, 'other assignments unaffected');
       assert.deepEqual(await page.evaluate(() => ({ focus:document.activeElement.tagName, x:scrollX, y:scrollY })), state);
       assert.equal(await page.locator('#xps-masonry-keys').evaluate((e) => getComputedStyle(e).pointerEvents), 'none');
@@ -302,21 +304,21 @@ try {
       await page.locator('#fixture-guards input').first().focus();
       assert.equal(await press(page,'1'), false, 'active editor guarded even with body event target');
       await blur(page);
-      for (const key of 'abcdefghijklmnopqrstuvwxyz./?'.split('').filter((key) => !'jkwvc'.includes(key))) {
+      for (const key of 'abcdefghijklmnopqrstuvwxyz./?'.split('').filter((key) => !'jkwvcdeqyz'.includes(key))) {
         assert.equal(await press(page,key), false);
       }
       await press(page,'g');
       assert.equal(await press(page,'1'), false, 'native g-prefix continuation passes through');
       await press(page,'g'); await press(page,'h');
-      assert.equal(await countCalls(page), 10);
+      assert.equal(await countCalls(page), hintCount);
       await page.locator('#fixture-guards').evaluate((e) => e.remove());
       await page.locator('.timeline').evaluate((timeline) => {
         timeline.insertAdjacentHTML('beforeend', '<aside id="fixture-recommendation" style="position:fixed;right:10px;top:300px;width:160px;height:100px;background:#333;z-index:10"><article><a href="/recommend/status/555"><time>Recommendation</time></a></article></aside><article id="fixture-hidden-card" style="display:none"><a href="/hidden/status/556"><time>Hidden post</time></a></article>');
       });
-      await settled(page,10);
+      await settled(page);
       assert.equal((await badges(page)).some((entry) => /\/(?:555|556)$/.test(entry.url)), false);
       await page.locator('#fixture-recommendation, #fixture-hidden-card').evaluateAll((nodes) => nodes.forEach((e) => e.remove()));
-      await settled(page,10);
+      await settled(page);
       // Help/lightbox/menu suppress hints globally, even when not focused.
       for (const role of ['dialog','menu','alertdialog']) {
         await page.evaluate((role) => {
@@ -324,9 +326,9 @@ try {
           el.style.cssText = 'position:fixed;right:0;top:0;width:80px;height:80px;background:#333;z-index:20'; document.body.append(el);
         }, role);
         assert.equal(await press(page,'1'), false);
-        assert.equal(await page.locator('.xps-masonry-key').count(), 0);
+        await page.waitForFunction(() => !document.querySelector('.xps-masonry-key'));
         await page.locator('#fixture-cover').evaluate((e) => e.remove());
-        await settled(page,10);
+        await settled(page);
       }
       // Recycled href/anchor/card, and geometry changes in the SAME task as keydown.
       for (const mutation of ['url','anchor','identity','shift','raw-query']) {
@@ -345,9 +347,9 @@ try {
           if (mutation === 'shift') card.style.transform = 'translateY(12px)';
           const event = new KeyboardEvent('keydown', { key:'1', bubbles:true, cancelable:true });
           document.body.dispatchEvent(event); return event.defaultPrevented;
-        }, mutation), false);
-        assert.equal(await countCalls(page), prior);
-        await settled(page,10);
+        }, mutation), !['url', 'identity'].includes(mutation));
+        assert.equal(await countCalls(page), prior + (['url', 'identity'].includes(mutation) ? 0 : 1));
+        await settled(page);
       }
       await blur(page);
       const current = (await badges(page))[0];
@@ -359,10 +361,10 @@ try {
         const cover = document.createElement('div'); cover.id = 'fixture-occlusion';
         cover.style.cssText = `position:fixed;z-index:20;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;background:#444`; document.body.append(cover);
       });
-      await settled(page,10);
+      await settled(page);
       assert.equal((await badges(page)).some((entry) => entry.url.endsWith('/101')), false);
       await page.locator('#fixture-occlusion').evaluate((e) => e.remove());
-      await settled(page,10);
+      await settled(page);
       const priorScroll = await countCalls(page);
       assert.equal(await page.evaluate(() => {
         scrollTo(0,350);
@@ -392,14 +394,16 @@ try {
         });
         visible.append(image);
         const r = visible.getBoundingClientRect();
-        const event = new KeyboardEvent('keydown',{key:'1',bubbles:true,cancelable:true});
+        const url = visible.querySelector('a[href*="/fixture/status/"]').href;
+        const badge = [...document.querySelectorAll('.xps-masonry-key')].find((n) => n.dataset.url === url);
+        const event = new KeyboardEvent('keydown',{key:badge.textContent,bubbles:true,cancelable:true});
         document.body.dispatchEvent(event);
         image.dispatchEvent(new Event('load'));
         return { prevented:event.defaultPrevented, height:r.height, imageHeight:image.getBoundingClientRect().height };
       });
       assert.ok(imageChange.imageHeight >= 320 && imageChange.height > 320, 'image changes card geometry');
-      assert.equal(imageChange.prevented, false);
-      assert.equal(await countCalls(page), beforeImage);
+      assert.equal(imageChange.prevented, true);
+      assert.equal(await countCalls(page), beforeImage + 1);
       await settled(page);
       // Busy unrelated counters must not recreate settled hint nodes.
       await page.locator('.xps-masonry-key').first().evaluate((e) => { window.stableBadge = e; });

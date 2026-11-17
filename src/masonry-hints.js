@@ -1,19 +1,18 @@
-import { isShortcutControl } from './keyboard.js';
+import { isShortcutControl, isNativeShortcutSequence } from './keyboard.js';
 
-// Disposable viewport assignments. No native clicks, permanent post keys, or polling.
+// Viewport-local assignments, keyed by card + own permalink, not layout or counters.
 export function initMasonryHints({ permalink, eligible, openBackground }) {
   if (typeof document.elementFromPoint !== 'function') return;
-  const keys = '1234567890';
+  const keys = '1234567890deqyz';
   const layer = document.createElement('div');
   layer.id = 'xps-masonry-keys';
   layer.setAttribute('aria-hidden', 'true');
   layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:3';
-  let snapshot = null;
+  const assignments = new Map();
   let route = location.href;
-  let timer = 0;
-  let prefixUntil = 0;
+  let frame = 0;
   const observed = new Set();
-  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => invalidate()) : null;
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
 
   function feed() {
     if (document.hidden || /\/status\/\d+(?:\/|$)/.test(location.pathname) ||
@@ -61,25 +60,14 @@ export function initMasonryHints({ permalink, eligible, openBackground }) {
         if (patch) break;
       }
       if (!patch) continue;
-      // Keep raw full hrefs and anchor identities too, even if canonical URL is unchanged.
-      const links = [...card.querySelectorAll('a[href*="/status/"]')].map((anchor) => [anchor, anchor.getAttribute('href')]);
-      result.push({ card, source, url, links, rect: [rect.left, rect.top, rect.right, rect.bottom], patch });
+      result.push({ card, source, url, rect: [rect.left, rect.top, rect.right, rect.bottom], patch });
     }
     return result.sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
   }
 
-  function same(a, b) {
-    return a !== null && a.length === b.length && a.every((entry, index) => {
-      const next = b[index];
-      return entry.card === next.card && entry.source === next.source && entry.url === next.url &&
-        entry.links.length === next.links.length && entry.links.every(([anchor, href], i) => anchor === next.links[i][0] && href === next.links[i][1]) &&
-        entry.rect.every((n, i) => n === next.rect[i]) && entry.patch.every((n, i) => n === next.patch[i]);
-    });
-  }
-
-  function clear() {
-    snapshot = null;
-    if (layer.childNodes.length) layer.replaceChildren();
+  function remove(card) {
+    assignments.get(card)?.badge.remove();
+    assignments.delete(card);
   }
 
   function observe(entries) {
@@ -89,75 +77,87 @@ export function initMasonryHints({ permalink, eligible, openBackground }) {
     for (const node of wanted) if (node && !observed.has(node)) { observed.add(node); resize?.observe(node); }
   }
 
-  function invalidate() {
-    clear();
-    window.clearTimeout(timer);
-    timer = 0;
+  function reconcile() {
+    frame = 0;
+    if (route !== location.href) {
+      for (const card of assignments.keys()) remove(card);
+    }
     route = location.href;
-    if (!feed()) { observe([]); return; }
-    timer = window.setTimeout(() => {
-      const before = cards();
-      timer = window.setTimeout(() => {
-        timer = 0;
-        const after = cards();
-        if (route !== location.href || !same(before, after)) { invalidate(); return; }
-        observe(after);
-        snapshot = after;
-        if (!after.length) return;
+    const current = cards();
+    const byCard = new Map(current.map((entry) => [entry.card, entry]));
+    for (const [card, entry] of assignments) {
+      const next = byCard.get(card);
+      if (!next || next.url !== entry.url || next.source !== entry.source) remove(card);
+    }
+    const available = [...keys].filter((key) => ![...assignments.values()].some((entry) => entry.key === key));
+    for (const entry of current) {
+      let assigned = assignments.get(entry.card);
+      if (!assigned) {
+        const key = available.shift();
+        if (!key) continue;
+        const badge = document.createElement('span');
+        badge.className = 'xps-masonry-key';
+        badge.textContent = key;
+        badge.dataset.url = entry.url;
+        badge.style.cssText = 'position:absolute;width:28px;height:28px;box-sizing:border-box;text-align:center;border:1px solid white;border-radius:5px;background:#202020;color:white;font:bold 16px/26px monospace;pointer-events:none;box-shadow:0 1px 4px #0008';
+        assigned = { ...entry, key, badge };
+        assignments.set(entry.card, assigned);
         if (!layer.isConnected) document.body.append(layer);
-        after.slice(0, keys.length).forEach((entry, i) => {
-          const badge = document.createElement('span');
-          badge.className = 'xps-masonry-key';
-          badge.textContent = keys[i];
-          badge.dataset.url = entry.url;
-          badge.style.cssText = `position:absolute;left:${entry.patch[0]}px;top:${entry.patch[1]}px;width:28px;height:28px;box-sizing:border-box;text-align:center;border:1px solid white;border-radius:5px;background:#202020;color:white;font:bold 16px/26px monospace;pointer-events:none;box-shadow:0 1px 4px #0008`;
-          layer.append(badge);
-        });
-      }, 80);
-    }, 100);
+        layer.append(badge);
+      }
+      // Only geometry changes. Identity and the displayed key survive reflow.
+      const [x, y] = entry.patch;
+      if (assigned.badge.style.left !== `${x}px`) assigned.badge.style.left = `${x}px`;
+      if (assigned.badge.style.top !== `${y}px`) assigned.badge.style.top = `${y}px`;
+    }
+    observe(current);
+  }
+
+  function schedule() {
+    if (assignments.size && (route !== location.href || !feed())) {
+      for (const card of assignments.keys()) remove(card);
+    }
+    if (!frame) frame = requestAnimationFrame(reconcile);
   }
 
   new MutationObserver((records) => {
     if (records.every((record) => layer.contains(record.target) ||
       (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every((node) => node === layer)))) return;
-    if (route === location.href && snapshot !== null && same(snapshot, cards())) return;
-    if (timer && route === location.href) return; // Busy counters must not starve settlement.
-    invalidate();
+    schedule();
   }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style', 'href', 'hidden', 'inert', 'aria-hidden', 'aria-modal', 'role'] });
-  window.addEventListener('scroll', invalidate, true);
-  window.addEventListener('resize', invalidate);
-  window.addEventListener('popstate', invalidate);
-  window.addEventListener('hashchange', invalidate);
-  /** @type {Window & {navigation?: EventTarget}} */ (window).navigation?.addEventListener('currententrychange', invalidate);
-  document.addEventListener('visibilitychange', invalidate);
-  document.addEventListener('xps-navigation-change', invalidate);
-  document.addEventListener('xps-masonry-change', invalidate);
-  document.fonts?.addEventListener('loadingdone', invalidate);
-  for (const name of ['load', 'transitionrun', 'transitionend', 'animationstart', 'animationend']) document.addEventListener(name, invalidate, true);
+  window.addEventListener('scroll', schedule, true);
+  window.addEventListener('resize', schedule);
+  window.addEventListener('popstate', schedule);
+  window.addEventListener('hashchange', schedule);
+  /** @type {Window & {navigation?: EventTarget}} */ (window).navigation?.addEventListener('currententrychange', schedule);
+  document.addEventListener('visibilitychange', schedule);
+  document.addEventListener('xps-navigation-change', schedule);
+  document.addEventListener('xps-masonry-change', schedule);
+  document.fonts?.addEventListener('loadingdone', schedule);
+  // Media dimensions are also observed. Unrelated site animations are not layout signals.
+  document.addEventListener('load', (event) => {
+    if (event.target instanceof Element && feed()?.contains(event.target)) schedule();
+  }, true);
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'g' && !event.ctrlKey && !event.metaKey && !event.altKey &&
-        !event.shiftKey && !isShortcutControl(event)) {
-      prefixUntil = Date.now() + 1000;
-      return; // Observe, never consume, X's native navigation prefix.
-    }
-    if (Date.now() < prefixUntil && event.key.length === 1) {
-      prefixUntil = 0;
-      return;
-    }
+    if (isNativeShortcutSequence(event)) return;
     if (!keys.includes(event.key) || event.key.length !== 1 || event.defaultPrevented || event.repeat ||
         event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey ||
         isShortcutControl(event) ||
         [event.target, document.activeElement].some((node) => node instanceof Element &&
           node.closest('nav, header[role="banner"], [role="menu"], .xps-nav-toggle'))) return;
-    const current = cards();
-    if (route !== location.href || !same(snapshot, current)) { invalidate(); return; }
-    const index = keys.indexOf(event.key);
-    const entry = snapshot?.[index];
-    if (!entry || !feed()) return;
+    const entry = [...assignments.values()].find((assigned) => assigned.key === event.key);
+    // Independently validate the selected mapping, even before a queued frame runs.
+    const valid = route === location.href && entry && cards().some((current) =>
+      current.card === entry.card && current.source === entry.source && current.url === entry.url);
+    if (!valid) {
+      if (entry) remove(entry.card);
+      schedule();
+      return;
+    }
     if (openBackground(entry.url)) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
   }, true);
-  invalidate();
+  schedule();
 }

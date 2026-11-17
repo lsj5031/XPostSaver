@@ -38,7 +38,7 @@ import uiCss from './main.css';
 import { initMasonryNavigation } from './masonry-navigation.js';
 import { initMasonryHints } from './masonry-hints.js';
 import { initMasonry } from './masonry.js';
-import { isShortcutControl } from './keyboard.js';
+import { isShortcutControl, isNativeShortcutSequence } from './keyboard.js';
 
 const STORAGE_KEY = 'xSavedPosts';
 const STORAGE_SYNC_KEY = 'xpsSync';
@@ -916,6 +916,7 @@ function getFocusedShortcutPost(event) {
 
 /** @param {KeyboardEvent} event */
 function onPageScrollShortcut(event) {
+  if (isNativeShortcutSequence(event)) return;
   if (event.key !== ' ' || event.ctrlKey || event.metaKey || event.altKey ||
       event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
   // Space should page the timeline even when a clicked action retains focus.
@@ -938,6 +939,7 @@ function onPageScrollShortcut(event) {
 
 /** @param {KeyboardEvent} event */
 function onPostNavigationShortcut(event) {
+  if (isNativeShortcutSequence(event)) return;
   if (!['j', 'k'].includes(event.key) || event.shiftKey || event.ctrlKey || event.metaKey ||
       event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
   if (isShortcutControl(event) ||
@@ -1001,6 +1003,7 @@ function onPostNavigationShortcut(event) {
 
 /** @param {KeyboardEvent} event */
 function onPostShortcut(event) {
+  if (isNativeShortcutSequence(event)) return;
   const key = event.key.toLowerCase();
   // Keep x available for X's native Block action.
   const background = key === 'w';
@@ -1754,7 +1757,8 @@ function init() {
   if (window.self !== window.top) return;
 
   ensureStyles();
-  const masonry = initMasonry({ read: storageGet, write: storageSet });
+  const masonry = initMasonry({ read: storageGet, write: storageSet,
+    permalink: (article) => getTweetPermalink(article, { ownOnly:true }) });
   ensurePanel(masonry);
   initMasonryNavigation();
   initMasonryHints({

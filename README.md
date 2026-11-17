@@ -90,8 +90,13 @@ Install **ONE script, X Post Saver**. Masonry is built in and **on by default**.
 Remove the separate X.com Masonry View script; reinstalling it is not required.
 The expanded bookmark panel has a **Masonry: On/Off** recovery control. Its
 separate `xpsMasonryEnabled` setting does not replace saved posts or settings.
-Cards use shortest-column placement, with approximately 320px minimum widths,
-and revert to native layout below 700px. Native status/detail pages stay native.
+Newly placed posts choose the shortest column, with approximately 320px minimum
+widths. Once placed, a post keeps its column for the current feed and column
+count. Delayed image/quote growth moves downstream cards **within that column**,
+without repacking existing posts across columns or fixing/clipping their heights.
+Insertion, reorder and virtualized DOM replacement use own-post identities, not
+recycled indexes. Changing the number of columns or the feed route legitimately
+starts a new placement. Below 700px and on status/detail pages, layout is native.
 
 The relevant layout/scroller logic is adapted from MIT X.com Masonry View 1.7.7,
 not its network blocking, feed GC, global scheduling or media-resource hacks.
@@ -100,9 +105,15 @@ The `unsafeWindow` grant accesses only the active timeline's React-scroller
 capabilities through the userscript manager, without inline CSP injection.
 Instance hooks are restored on route/disable/container replacement. Unsupported
 absolute virtualizers remain native instead of freezing their navigation.
-Rendering is windowed to at most 120 virtual items; unloaded/unmeasured item
-heights are estimated until mounted. Very long timelines can shift as estimates
-are replaced by measurements. Native quotes are neither moved nor reconstructed.
+Rendering is windowed to at most 120 virtual items. Native candidate positions,
+rendered slices and feed height share the same synthetic layout. Unmeasured
+offscreen items are predictions until placed; replacing estimates can shift
+vertical positions, but not committed column assignments. Measurement history
+is capped at 2000 identities; small column records are retained only for the
+current native loaded list and pruned on removal, never for historical DOM.
+Ambiguous/missing native identities or an extreme layout that cannot cover all
+visible cards in one bounded native window fall back to native rendering.
+Native quotes are neither moved nor reconstructed.
 
 When a connected masonry timeline is active, landscape windows
 at least 1000px wide give the **entire available width to the feed**, with zero
@@ -124,26 +135,40 @@ bookmark panel are unaffected. Verified with offline native-shaped DOM/layout
 fixtures, **not a live logged-in X account**; future X/upstream DOM changes may
 require compatibility updates.
 
-### Masonry single-key background opening (v0.5.13)
+### Masonry single-key background opening (v0.5.14)
 
-While a real primary masonry timeline is active, up to ten visible, exposed
-posts show badges **1 2 3 4 5 6 7 8 9 0**, in top-to-bottom, then left-to-right
-order. Press the displayed digit once to open that post's own permalink in a
-**new background tab**, without moving feed focus or scroll. No activation mode
-or Enter is needed. Extra visible cards are unlabelled. This also works in
-portrait/narrow masonry views, where the native sidebar is not changed.
+While a real primary masonry timeline is active, up to fifteen visible, exposed
+posts receive digit-first badges **1 2 3 4 5 6 7 8 9 0 d e q y z**. Initial
+assignment follows top-to-bottom, then left-to-right order. Visible surviving
+posts keep their keys and badge nodes as counters, media and layout change;
+newly exposed posts take free keys, without reshuffling existing labels. Extra
+cards stay unlabelled when the pool is exhausted. Press the displayed key once
+to open that post's own permalink in a **new background tab**, without moving
+feed focus or scroll. No activation mode, sequence or Enter is needed.
 
-Badges are pointer-transparent overlays, not part of the masonry cards. They
-are reassigned after scrolling, resizing, and layout settlement. Keys recheck
-route, connected card and link identities, URL, geometry, and exposed patches
-before opening; a stale key does nothing until badges settle again. Quotes,
-recommendations, hidden/covered posts, status detail pages, open navigation
-drawers, and visible dialogs/menus/lightboxes do not receive active hints.
+Positions reconcile in animation frames, without clearing the whole layer or
+waiting for a debounce. Scroll/reflow moves badges with their cards; removed,
+recycled, covered and route-invalid mappings are discarded before the next
+paint. Keypress independently checks the selected card's current own URL and
+exposure, even before a pending reconciliation. Quotes, recommendations,
+status detail pages, open drawers and visible dialogs/menus get no active hints.
 
-Only unmodified digits are used, leaving native letter shortcuts/prefixes and
-existing **j/k, w/v/c, Space** unchanged. Typing, select/range, focused media,
-menus, modifiers, IME, and held repeats are ignored. A native **g** prefix and
-its immediate continuation pass through. Existing `GM_openInTab` permission,
+The added lowercase pool is **d/e/q/y/z**, not every unused alphabet position.
+The offline source/reference audit reserves **a/g** (native audio/navigation
+prefixes), **b/x** (both reported Block bindings), **n/l/r/t/m/u/o** (native
+post actions), **f** (media), **j/k** (navigation), **w/v/c** (existing XPostSaver
+actions), and **h/i/p/s** (navigation destinations, conservatively reserved).
+`d` is an audio-dock destination only after `a`; both **g** and **a**, and their
+next character within 1.5 seconds, pass through without opening a badge.
+Typing, select/range, focused media, menus, modifiers, IME and held repeats
+remain guarded. Space, punctuation, native Enter and existing shortcuts are
+unchanged. No added single-letter action for d/e/q/y/z was identified in the
+available references, but those cached third-party lists are not authoritative
+and live X bindings can vary. **Current authenticated X shortcut UI/source was
+not accessible offline**, so this is a conservative compatibility policy, not a
+claim of live verification. Check X's `?` menu when reviewing a live release.
+
+Existing `GM_openInTab` permission,
 options (`active: false`, `insert: true`, `setParent: true`), and error feedback
 are reused, without `click()` or a foreground-tab fallback. Missing/failed APIs
 show an error; promise-returning APIs are not treated as synchronous acceptance
@@ -197,7 +222,7 @@ Rendering details:
 
 ## Installation
 
-Current userscript release: **0.5.13**. See [changelog](CHANGELOG.md).
+Current userscript release: **0.5.14**. See [changelog](CHANGELOG.md).
 
 ### Userscript
 
