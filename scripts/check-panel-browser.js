@@ -125,7 +125,7 @@ try {
       await toggle().focus();
       const beforeArrow = await toggle().boundingBox();
       await page.keyboard.press('ArrowLeft');
-      assert.equal(await page.locator('#xps-panel').evaluate((panel) => panel.getBoundingClientRect().x), beforeArrow.x - 16);
+      assert.equal(await page.locator('#xps-panel').evaluate((panel) => panel.getBoundingClientRect().x), Math.max(8, beforeArrow.x - 16));
       // Synthetic touch/pen lifecycle coverage, not a claim of physical-device input.
       for (const pointerType of ['touch', 'pen']) {
         for (const ending of ['pointercancel', 'lostpointercapture']) {

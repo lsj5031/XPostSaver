@@ -660,7 +660,7 @@ try {
     assert.equal(await page.locator('.xps-nav-toggle').count(), 1);
     await measure(page, `${kind}-11-container-return`);
     await page.locator('.xps-panel-toggle').click();
-    await page.getByRole('button', { name:'Masonry: On', exact:true }).click();
+    await page.getByRole('button', { name:'Masonry: On (active)', exact:true }).click();
     await page.waitForFunction(() => !document.querySelector('.xps-masonry-container'));
     assert.equal(await page.evaluate(() => window.fixture.scroller._getRenderCandidates === window.fixture.original), true);
     await page.getByRole('button', { name:'Masonry: Off', exact:true }).click();
@@ -700,7 +700,10 @@ try {
       }
     }
     else {
-      await page.waitForTimeout(800);
+      if (mode === 'opaque') {
+        await page.waitForFunction(() => [...document.querySelectorAll('#xps-panel button')]
+          .some((node) => /unsupported.*candidate/i.test(node.textContent)), null, { timeout:7500 });
+      } else await page.waitForTimeout(800);
       assert.equal(await page.locator('.xps-masonry-container').count(), 0);
       assert.equal(await page.evaluate(() => window.fixture.scroller._getRenderCandidates === window.fixture.original), true);
     }

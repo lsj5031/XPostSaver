@@ -761,11 +761,21 @@ function ensurePanel(masonry) {
   panel.appendChild(factSettings);
   const masonryToggle = document.createElement('button');
   masonryToggle.type = 'button';
+  masonryToggle.style.whiteSpace = 'normal';
+  masonryToggle.style.maxWidth = 'calc(100vw - 32px)';
   const labelMasonry = () => {
-    masonryToggle.textContent = `Masonry: ${masonry.enabled() ? 'On' : 'Off'}`;
+    const label = `Masonry: ${masonry.enabled() ? `On (${masonry.status()})` : 'Off'}`;
+    if (masonryToggle.textContent !== label) {
+      masonryToggle.textContent = label;
+      if (panel.isConnected) {
+        const rect = panel.getBoundingClientRect();
+        setPanelPosition(panel, { x:rect.left, y:rect.top });
+      }
+    }
     masonryToggle.setAttribute('aria-pressed', String(masonry.enabled()));
   };
   labelMasonry();
+  document.addEventListener('xps-masonry-status', labelMasonry);
   masonryToggle.addEventListener('click', () => { masonry.toggle(); labelMasonry(); });
   panel.appendChild(masonryToggle);
 

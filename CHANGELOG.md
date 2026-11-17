@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.15
+
+- Recover from an initially missing React bridge on the same feed container with
+  bounded hydration retries and event-driven recovery, without permanent rejection.
+- Discover native pagination callbacks in instance props even when React
+  memoized props exist without the callback, matching the supplied upstream.
+- Correct .14-only candidate restrictions: recognize wrapper-owned and primitive
+  item keys, do not reject identity because position is structured, and preserve
+  structured native coordinates/references instead of flattening them.
+- Keep missing/repeated non-post loading-row labels from disabling the whole
+  feed, without assigning anonymous slots to actual posts.
+- Wait for delayed native React commits rather than permanently rejecting a
+  known-post mismatch; suspend owned CSS until the commit can be matched.
+- Give ambiguous loading-row/post commits a fixed six-second validation grace;
+  resume matched commits automatically, otherwise restore native fallback.
+- Show requested Masonry On separately from active, waiting or unsupported status
+  in the existing panel control. Unknown candidates retain native layout with
+  schema-only error context, never post content or identifiers.
+- Add offline source/bundle page-world, hydration and native-restoration checks.
+  Compare concrete regression shapes with exact .13/.14 release bundles.
+  These shapes are modeled, not a live X candidate capture; live manager
+  compatibility remains unverified.
+
 ## 0.5.14
 
 - Keep placed posts in identity-stable columns as image/quote heights change;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.14
+// @version      0.5.15
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1230,6 +1230,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   // src/masonry.js
   var POST = 'article[role="article"], [data-testid="tweet"]';
   var LIMIT = 120;
+  var COMMIT_GRACE_MS = 6e3;
   function outerPosts(root) {
     return [...root.querySelectorAll(POST)].filter((post) => {
       const owner = post.parentElement?.closest(POST);
@@ -1310,8 +1311,17 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   __name(createMasonryLayout, "createMasonryLayout");
   function masonryEntry(entry) {
     const item = entry?.item ?? entry;
-    const id = item?.id ?? item?.entryId ?? item?.key;
-    if (!["string", "number"].includes(typeof id) || String(id).trim() === "" || typeof id === "number" && !Number.isFinite(id) || entry.position !== void 0 && !Number.isFinite(entry.position)) return null;
+    const valid = /* @__PURE__ */ __name((value) => ["string", "number"].includes(typeof value) && String(value).trim() !== "" && (typeof value !== "number" || Number.isFinite(value)), "valid");
+    const id = [
+      item?.id,
+      item?.entryId,
+      item?.key,
+      entry?.id,
+      entry?.entryId,
+      entry?.key,
+      typeof item === "object" ? void 0 : item
+    ].find(valid);
+    if (id === void 0) return null;
     const post = /^(?:tweet-|post-)?(\d+)$/.exec(String(id))?.[1];
     return {
       key: post ? `post:${post}` : `entry:${id}`,
@@ -1353,7 +1363,40 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     const observed = /* @__PURE__ */ new Set();
     let placement = createMasonryLayout();
     let activeRoute = "";
-    let rejected = /* @__PURE__ */ new WeakSet();
+    let rejected = /* @__PURE__ */ new WeakMap();
+    let status = "waiting for feed";
+    let retryContainer = null, retryCount = 0, retryTimer = 0;
+    let bridgeReason = "waiting for React bridge";
+    function setStatus(value) {
+      if (status === value) return;
+      status = value;
+      document.dispatchEvent(new Event("xps-masonry-status"));
+    }
+    __name(setStatus, "setStatus");
+    function reject(container, reason) {
+      rejected.set(container, reason);
+      schedule();
+    }
+    __name(reject, "reject");
+    function waitForBridge(container) {
+      setStatus(bridgeReason);
+      if (retryContainer !== container) {
+        retryContainer = container;
+        retryCount = 0;
+      }
+      if (retryTimer) return;
+      const delay = [150, 350, 750, 1500, 3e3][retryCount++];
+      if (!retryTimer && delay) retryTimer = window.setTimeout(() => {
+        retryTimer = 0;
+        schedule();
+      }, delay);
+    }
+    __name(waitForBridge, "waitForBridge");
+    function wake() {
+      if (!retryTimer) retryCount = 0;
+      schedule();
+    }
+    __name(wake, "wake");
     const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
     const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
     function release() {
@@ -1364,6 +1407,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       observed.clear();
       const scroller = bridge?.scroller;
       if (bridge) {
+        window.clearTimeout(bridge.commitTimer);
         for (const [name, entry] of bridge.originals) {
           if (bridge.scroller[name] !== entry.installed) continue;
           if (entry.own) bridge.scroller[name] = entry.value;
@@ -1419,25 +1463,40 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       try {
         scroller._handleScroll();
       } catch {
-        if (active) rejected.add(active);
+        if (active) reject(active, "unsupported: native refresh failed");
         schedule();
       }
     }
     __name(refresh, "refresh");
     function connect(container) {
       const native = page.document.querySelector("[data-xps-scroller]");
+      bridgeReason = "waiting for page-world list";
       if (!native) return null;
       const key = Object.keys(native).find((name) => name.startsWith("__reactFiber$"));
-      let fiber = key ? native[key] : null;
+      bridgeReason = "waiting for React bridge";
+      if (!key) return null;
+      let fiber = native[key];
       let scroller = null, fetch = null;
       for (let depth = 0; fiber && depth < 80; depth++, fiber = fiber.return) {
         if (!scroller && typeof fiber.stateNode?._getRenderCandidates === "function") scroller = fiber.stateNode;
-        const props = fiber.memoizedProps || fiber.stateNode?.props;
-        if (!fetch && typeof props?.onNearBottom === "function") fetch = /* @__PURE__ */ __name(() => props.onNearBottom(), "fetch");
-        if (!fetch && typeof props?.onNearEnd === "function") fetch = /* @__PURE__ */ __name(() => props.onNearEnd(), "fetch");
+        for (const props of [fiber.memoizedProps, fiber.stateNode?.props]) {
+          if (!fetch && typeof props?.onNearBottom === "function") fetch = /* @__PURE__ */ __name(() => props.onNearBottom(), "fetch");
+          if (!fetch && typeof props?.onNearEnd === "function") fetch = /* @__PURE__ */ __name(() => props.onNearEnd(), "fetch");
+        }
       }
+      bridgeReason = !scroller ? "waiting for native scroller" : !fetch ? "waiting for native pagination callback" : "unsupported: native scroll method missing";
       if (!scroller || !fetch || typeof scroller._handleScroll !== "function") return null;
-      const state = { scroller, fetch, originals: /* @__PURE__ */ new Map(), items: [], rendered: [], geometry: { positions: [], heights: [] } };
+      const state = {
+        scroller,
+        fetch,
+        originals: /* @__PURE__ */ new Map(),
+        items: [],
+        rendered: [],
+        geometry: { positions: [], heights: [] },
+        commitDeadline: 0,
+        commitTimer: 0
+      };
+      const anonymousRows = /* @__PURE__ */ new Map();
       const replace = /* @__PURE__ */ __name((name, installed) => {
         state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
         scroller[name] = installed;
@@ -1447,14 +1506,33 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         const result = original.apply(scroller, args);
         if (bridge !== state) return result;
         if (!Array.isArray(result?.allItemsWithPositions) || !result.slice || !Array.isArray(result.newRenderedItems)) {
-          rejected.add(container);
+          reject(container, "unsupported: candidate envelope");
           schedule();
           return result;
         }
-        const items = result.allItemsWithPositions.map(masonryEntry);
+        const anonymousSlots = /* @__PURE__ */ new Set();
+        const parsedEntries = result.allItemsWithPositions.map(masonryEntry);
+        const counts = /* @__PURE__ */ new Map();
+        for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
+        const items = result.allItemsWithPositions.map((entry, index) => {
+          const parsed = parsedEntries[index];
+          if (parsed && (parsed.post || counts.get(parsed.key) === 1) || !entry || typeof entry !== "object") return parsed;
+          anonymousSlots.add(index);
+          if (!anonymousRows.has(index)) anonymousRows.set(index, /* @__PURE__ */ Symbol("native row"));
+          return {
+            key: anonymousRows.get(index),
+            entry,
+            anonymous: true,
+            fullRow: true,
+            height: Number.isFinite(entry.height) && entry.height > 0 ? entry.height : 320
+          };
+        });
+        for (const index of anonymousRows.keys()) if (!anonymousSlots.has(index)) anonymousRows.delete(index);
         const posts = items.filter((item) => item?.post).map((item) => item.post);
         if (items.some((item) => !item) || new Set(items.map((item) => item.key)).size !== items.length || new Set(posts).size !== posts.length) {
-          rejected.add(container);
+          const first = result.allItemsWithPositions.find((entry) => !masonryEntry(entry));
+          const shape = first ? ` (item ${typeof first.item}, id ${typeof (first.item ?? first).id}, position ${typeof first.position})` : " (duplicate identity)";
+          reject(container, `unsupported: candidate identity/position${shape}`);
           schedule();
           return result;
         }
@@ -1465,16 +1543,16 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         const y = Math.max(0, -container.getBoundingClientRect().top);
         const slice = masonryWindow(layout, y, innerHeight);
         if (!slice) {
-          rejected.add(container);
-          schedule();
+          reject(container, "unsupported: visible window exceeds safe limit");
           return result;
         }
-        const positioned = items.map((item, i) => ({
+        const scalar = items.every(({ entry }) => entry.position === void 0 || Number.isFinite(entry.position));
+        const positioned = scalar ? items.map((item, i) => ({
           ...item.entry,
           position: layout.positions[i].top,
           top: layout.positions[i].top,
           height: layout.heights[i]
-        }));
+        })) : result.allItemsWithPositions;
         state.rendered = items.slice(slice.start, slice.end);
         schedule();
         return {
@@ -1495,6 +1573,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
             else delete scroller[name];
           }
         }
+        bridgeReason = "unsupported: native methods not writable";
         return null;
       }
       return state;
@@ -1502,22 +1581,30 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     __name(connect, "connect");
     function apply() {
       timer = 0;
-      if (lastRoute !== location.pathname + location.search) rejected = /* @__PURE__ */ new WeakSet();
+      if (lastRoute !== location.pathname + location.search) {
+        rejected = /* @__PURE__ */ new WeakMap();
+        retryCount = 0;
+      }
       lastRoute = location.pathname + location.search;
       const detail = /\/status\/\d+(?:\/|$)/.test(location.pathname);
       if (!enabled2 || detail || innerWidth < 700 || !resize) {
         if (active) release();
+        window.clearTimeout(retryTimer);
+        retryTimer = 0;
+        setStatus(!enabled2 ? "off" : detail ? "native: post detail" : innerWidth < 700 ? "native: narrow window" : "unsupported: ResizeObserver unavailable");
         return;
       }
       if (active && activeRoute !== lastRoute) release();
       if (document.querySelector(".xopt-masonry-container")) {
         if (active) release();
+        setStatus("active: external engine");
         return;
       }
       const container = discover();
       if (active && active !== container) release();
       if (!container || rejected.has(container)) {
         if (active) release();
+        setStatus(container ? rejected.get(container) : "waiting for feed");
         return;
       }
       if (!active) {
@@ -1531,17 +1618,20 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
             bridge = connect(container);
           } catch {
             bridge = null;
+            bridgeReason = "waiting for page-world access";
           }
           container.removeAttribute("data-xps-scroller");
           if (!bridge) {
-            rejected.add(container);
+            waitForBridge(container);
             return;
           }
         }
+        window.clearTimeout(retryTimer);
+        retryTimer = 0;
+        retryContainer = null;
+        retryCount = 0;
         active = container;
         activeRoute = lastRoute;
-        active.classList.add("xps-masonry-container");
-        document.dispatchEvent(new Event("xps-masonry-change"));
         viewportDirty = true;
       }
       if (bridge && viewportDirty) {
@@ -1551,6 +1641,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         if (!bridge.items.length || !wanted2 || wanted2.length !== bridge.rendered.length || wanted2.some((item, i) => item.key !== bridge.rendered[i].key)) refresh(bridge.scroller);
         if (rejected.has(container)) {
           release();
+          setStatus(rejected.get(container));
           return;
         }
       }
@@ -1566,18 +1657,54 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         const id = url && /\/status\/(\d+)/.exec(url)?.[1];
         const row = bridge?.rendered[i];
         const item = bridge ? post ? byPost.get(id) : row && !row.post ? row : null : { key: id ? `post:${id}` : url || /* @__PURE__ */ Symbol("row"), fullRow: !post };
-        return { child, item, fullRow: !post };
+        return { child, item, row, fullRow: !post };
       });
       if (bridge && cells.some((cell) => !cell.item)) {
-        rejected.add(container);
+        const knownPostCommit = cells.filter((cell) => !cell.item).every((cell) => !cell.row || cell.row.post);
+        if (!knownPostCommit && !bridge.commitDeadline) {
+          bridge.commitDeadline = Date.now() + COMMIT_GRACE_MS;
+          bridge.commitTimer = window.setTimeout(schedule, COMMIT_GRACE_MS);
+        }
+        if (knownPostCommit || Date.now() < bridge.commitDeadline) {
+          const wasActive = container.classList.contains("xps-masonry-container");
+          resize.disconnect();
+          for (const child of observed) clearChild(child);
+          observed.clear();
+          container.classList.remove("xps-masonry-container");
+          container.style.removeProperty("--xps-feed-height");
+          for (const child of container.children) clearChild(child);
+          if (wasActive) document.dispatchEvent(new Event("xps-masonry-change"));
+          bridgeReason = "waiting for native post commit (own permalink match missing)";
+          waitForBridge(container);
+          return;
+        }
+        const sample = bridge.rendered.find((item) => item.anonymous || !item.post)?.entry;
+        const type = /* @__PURE__ */ __name((value) => value === void 0 ? "-" : typeof value, "type");
+        const fields = /* @__PURE__ */ __name((value) => ["id", "entryId", "key"].map((key) => type(value?.[key])).join("/"), "fields");
+        const shape = sample ? ` (item ${type(sample.item)}, ids ${fields(sample.item)}, wrapper ${fields(sample)}, position ${type(sample.position)})` : "";
+        reject(container, `unsupported: own-post/native candidate identity mismatch${shape}`);
         release();
+        setStatus(rejected.get(container));
         return;
       }
       const items = bridge ? bridge.items : cells.map((cell) => cell.item);
       if (new Set(items.map((item) => item.key)).size !== items.length) {
-        rejected.add(container);
+        reject(container, "unsupported: duplicate identity");
         release();
         return;
+      }
+      window.clearTimeout(retryTimer);
+      retryTimer = 0;
+      retryContainer = null;
+      retryCount = 0;
+      if (bridge) {
+        window.clearTimeout(bridge.commitTimer);
+        bridge.commitTimer = 0;
+        bridge.commitDeadline = 0;
+      }
+      if (!container.classList.contains("xps-masonry-container")) {
+        container.classList.add("xps-masonry-container");
+        document.dispatchEvent(new Event("xps-masonry-change"));
       }
       placement.update(items, width);
       let layoutChanged = false;
@@ -1616,6 +1743,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         positionStyle(child, "--xps-card-y", `${position.top}px`);
       });
       positionStyle(container, "--xps-feed-height", `${layout.height}px`);
+      setStatus("active");
       if (layoutChanged) document.dispatchEvent(new Event("xps-masonry-change"));
       if (geometryChanged) refresh(bridge.scroller);
       const remaining = container.getBoundingClientRect().bottom - innerHeight;
@@ -1641,27 +1769,32 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     }
     __name(schedule, "schedule");
     new MutationObserver((records) => {
-      if (records.some((r) => [...r.addedNodes, ...r.removedNodes].some((n) => n instanceof Element && !n.closest("#xps-masonry-keys, #xps-panel") && !n.matches(".xps-nav-toggle, #xps-masonry-keys")))) schedule();
-    }).observe(document.body, { subtree: true, childList: true });
+      if (records.some((r) => r.type === "attributes" && r.target instanceof Element && r.target.closest('[data-testid="primaryColumn"]') || [...r.addedNodes, ...r.removedNodes].some((n) => n instanceof Element && !n.closest("#xps-masonry-keys, #xps-panel") && !n.matches(".xps-nav-toggle, #xps-masonry-keys")))) wake();
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["href"] });
     window.addEventListener("resize", () => {
       viewportDirty = true;
-      schedule();
+      wake();
     });
     window.addEventListener("scroll", () => {
       viewportDirty = true;
-      schedule();
+      wake();
     }, { passive: true });
-    window.addEventListener("popstate", schedule);
+    window.addEventListener("popstate", wake);
     window.setInterval(() => {
-      if (lastRoute !== location.pathname + location.search || !active?.isConnected) schedule();
+      if (lastRoute !== location.pathname + location.search || active && !active.isConnected) wake();
     }, 350);
     schedule();
     return {
       enabled: /* @__PURE__ */ __name(() => enabled2, "enabled"),
+      status: /* @__PURE__ */ __name(() => status, "status"),
       toggle() {
         enabled2 = !enabled2;
         write("xpsMasonryEnabled", enabled2);
         if (!enabled2) release();
+        else {
+          rejected = /* @__PURE__ */ new WeakMap();
+          retryCount = 0;
+        }
         schedule();
         return enabled2;
       }
@@ -2321,11 +2454,21 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     panel.appendChild(factSettings);
     const masonryToggle = document.createElement("button");
     masonryToggle.type = "button";
+    masonryToggle.style.whiteSpace = "normal";
+    masonryToggle.style.maxWidth = "calc(100vw - 32px)";
     const labelMasonry = /* @__PURE__ */ __name(() => {
-      masonryToggle.textContent = `Masonry: ${masonry.enabled() ? "On" : "Off"}`;
+      const label = `Masonry: ${masonry.enabled() ? `On (${masonry.status()})` : "Off"}`;
+      if (masonryToggle.textContent !== label) {
+        masonryToggle.textContent = label;
+        if (panel.isConnected) {
+          const rect = panel.getBoundingClientRect();
+          setPanelPosition(panel, { x: rect.left, y: rect.top });
+        }
+      }
       masonryToggle.setAttribute("aria-pressed", String(masonry.enabled()));
     }, "labelMasonry");
     labelMasonry();
+    document.addEventListener("xps-masonry-status", labelMasonry);
     masonryToggle.addEventListener("click", () => {
       masonry.toggle();
       labelMasonry();

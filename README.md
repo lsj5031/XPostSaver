@@ -90,6 +90,16 @@ Install **ONE script, X Post Saver**. Masonry is built in and **on by default**.
 Remove the separate X.com Masonry View script; reinstalling it is not required.
 The expanded bookmark panel has a **Masonry: On/Off** recovery control. Its
 separate `xpsMasonryEnabled` setting does not replace saved posts or settings.
+On means requested: the same control shows **active**, **waiting** (with the
+missing bridge/callback), or **unsupported** (with schema-only context).
+Missing React hydration gets a finite retry burst, then waits for feed changes,
+scroll, resize or navigation; toggling Off/On also retries. Unknown virtualizers
+remain native single-column, without forced CSS or unbounded rendered posts.
+The .15 adapter also accepts wrapper-owned/primitive native keys and preserves
+structured coordinate objects as .13 did. Anonymous or repeated loading-row
+labels do not disable known posts, but anonymous **posts** are never guessed from
+array order. A delayed native commit shows a waiting reason and resumes without
+requiring a toggle when its own-permalink identities become available.
 Newly placed posts choose the shortest column, with approximately 320px minimum
 widths. Once placed, a post keeps its column for the current feed and column
 count. Delayed image/quote growth moves downstream cards **within that column**,
@@ -222,7 +232,7 @@ Rendering details:
 
 ## Installation
 
-Current userscript release: **0.5.14**. See [changelog](CHANGELOG.md).
+Current userscript release: **0.5.15**. See [changelog](CHANGELOG.md).
 
 ### Userscript
 
@@ -354,6 +364,7 @@ node scripts/check-panel-browser.js
 
 ```bash
 node scripts/check-standalone-masonry-browser.js
+node scripts/check-masonry-activation-browser.js
 ```
 
   Injects only source or the shipped XPostSaver bundle into a native one-column,
@@ -365,6 +376,15 @@ node scripts/check-standalone-masonry-browser.js
   delayed mount and unsupported-scroller fallback. Evidence is written to
   `XPS_EVIDENCE` (default `/tmp/xps-standalone-evidence`).
   This does **not** validate live X pagination or a real userscript sandbox.
+  The activation gate separately checks same-container late hydration, finite
+  retry exhaustion/event recovery, distinct page-world expando access, native
+  callback discovery, route/replacement restoration and unknown-entry fallback
+  against source and bundle. These are modeled boundaries, not a manager test.
+  `node scripts/check-masonry-activation-browser.js --compare-releases` additionally
+  reads the exact .13/.14 bundles from local Git history and verifies modeled
+  last-commit regressions (not captured live shapes), bounded scroll coverage,
+  untouched structured native coordinates, optional loading identities and
+  delayed-commit recovery.
 
 - Optional external-layout compatibility/navigation fixture, using those same local
   tool environment variables:

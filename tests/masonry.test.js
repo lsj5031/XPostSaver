@@ -114,7 +114,14 @@ describe('identity-stable masonry placement', () => {
     expect(masonryEntry({ position:1, height:200 })).toBeNull();
     expect(masonryEntry({ id:'' })).toBeNull();
     expect(masonryEntry({ id:NaN })).toBeNull();
-    expect(masonryEntry({ id:'tweet-12', position:{ top:100 } })).toBeNull();
+    expect(masonryEntry({ id:'tweet-12', position:{ top:100 } })).toMatchObject({ key:'post:12', post:'12' });
+  });
+  it('recognizes wrapper and primitive list keys without treating coordinates as identity', () => {
+    expect(masonryEntry({ item:{ renderData:true }, entryId:'tweet-12', position:{ top:100, bottom:200 } }))
+      .toMatchObject({ key:'post:12', post:'12' });
+    expect(masonryEntry({ item:'tweet-12', position:{ top:100 } })).toMatchObject({ key:'post:12', post:'12' });
+    expect(masonryEntry({ item:{ id:'', entryId:'tweet-12' }, position:null })).toMatchObject({ key:'post:12', post:'12' });
+    expect(masonryEntry({ item:{ renderData:true }, position:{ top:100 } })).toBeNull();
   });
   it('covers nonmonotonic per-column positions with a bounded contiguous native window', () => {
     const layout = { positions:[{ top:1000 }, { top:0 }, { top:1100 }, { top:100 }], heights:[200, 200, 200, 200] };
