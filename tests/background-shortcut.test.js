@@ -448,6 +448,30 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s backgr
     else expect(open).not.toHaveBeenCalled();
   });
 
+  it('uses the outer permalink when an unmarked native inline quote timestamp comes first', () => {
+    const quote = '<div role="link"><div data-testid="User-Name">Quote author</div><a href="/quote/status/999"><time>Quote date</time></a><div data-testid="tweetText">Quoted text</div></div>';
+    const { document, key, open } = setup(`<article tabindex="0">${quote}<a href="/person/status/123"><time>Own date</time></a></article>`);
+    document.querySelector('article').focus();
+    const before = document.querySelector('[role="link"]').outerHTML;
+    expect(key().defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledExactlyOnceWith('https://x.com/person/status/123', { active: false, insert: true, setParent: true });
+    expect(document.querySelector('[role="link"]').outerHTML).toBe(before);
+  });
+
+  it('does not substitute an unmarked inline quote URL when the outer permalink is absent', () => {
+    const { document, key, open } = setup('<article tabindex="0"><div role="link"><div data-testid="User-Name">Quote author</div><a href="/quote/status/999"><time>Quote date</time></a><div data-testid="tweetText">Quoted text</div></div></article>');
+    document.querySelector('article').focus();
+    expect(key().defaultPrevented).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('does not mistake an author-only role-link wrapper for an inline quote', () => {
+    const { document, key, open } = setup('<article tabindex="0"><div role="link"><div data-testid="User-Name">Own author</div><a href="/person/status/123"><time>Own date</time></a></div><div data-testid="tweetText">Own body</div></article>');
+    document.querySelector('article').focus();
+    expect(key().defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledExactlyOnceWith('https://x.com/person/status/123', { active: false, insert: true, setParent: true });
+  });
+
   it('shows a useful missing-API error without intercepting the key when unavailable', () => {
     const { document, key, open } = setup();
     delete window.GM_openInTab;

@@ -1,0 +1,70 @@
+/* Specificity beats upstream's !important declarations in either load order. */
+html.xps-masonry-nav header[role="banner"].xps-nav-header {
+  flex: 0 0 0px !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  position: relative;
+  z-index: 4;
+}
+html.xps-masonry-nav .xps-feed-width {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin-inline: 0 !important;
+  padding-inline: 0 !important;
+  box-sizing: border-box !important;
+}
+html.xps-masonry-nav main[role="main"],
+html.xps-masonry-nav [data-testid="primaryColumn"] {
+  flex: 1 1 0% !important;
+}
+.xps-nav-header .xps-nav-width,
+.xps-nav-header .xps-nav-surface {
+  width: 280px !important;
+  min-width: 0 !important;
+  max-width: 280px !important;
+  box-sizing: border-box !important;
+  align-items: stretch !important;
+}
+.xps-nav-header .xps-nav-width:not(.xps-nav-surface) {
+  position: static !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+.xps-nav-header .xps-nav-surface > .xps-nav-width {
+  min-height: calc(100dvh - 56px) !important;
+}
+.xps-nav-header .xps-nav-surface {
+  position: fixed !important;
+  inset: 0 auto 0 0 !important;
+  height: 100dvh !important;
+  padding-top: 56px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  background: var(--xps-nav-background, Canvas);
+  color: var(--xps-nav-color, CanvasText);
+  scrollbar-width: thin;
+  box-shadow: 4px 0 20px #0003;
+}
+.xps-nav-header:not(.xps-nav-open) {
+  display: none !important;
+}
+.xps-nav-header.xps-nav-open .xps-nav-label { display: revert !important; }
+.xps-nav-toggle {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  width: 44px;
+  height: 44px;
+  z-index: 5;
+  border: 1px solid #8886;
+  border-radius: 999px;
+  background: var(--xps-nav-background, Canvas);
+  color: var(--xps-nav-color, CanvasText);
+  font: 24px sans-serif;
+  cursor: pointer;
+}
+.xps-nav-toggle:focus-visible { outline: 2px solid #1d9bf0; outline-offset: 1px; }

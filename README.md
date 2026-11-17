@@ -84,6 +84,66 @@ Extraction behavior details:
   - `核查设置`: edits the fact-check prompt template
 - Toast notifications for success/error states.
 
+### Compact masonry navigation (v0.5.12)
+
+Install **both** X Post Saver and the separate
+[🧱 X.com Masonry View](https://greasyfork.org/en/scripts/597544-x-com-masonry-view)
+userscript (compatibility targets 1.7.7). X Post Saver does not install, copy, or
+implement masonry, and does not adopt its network patches or React hooks.
+
+When that script has activated a connected masonry timeline, landscape windows
+at least 1000px wide give the **entire available width to the feed**, with zero
+sidebar reservation. A floating **☰** button (44px target, no letter shortcut)
+opens the original navigation in a 280px scrollable overlay without moving the
+feed. Click, Enter, or Space opens it and focuses its first native link. The
+closed drawer is hidden and inert, with no hidden keyboard stops. Original links,
+unread badges, compose, account, and More controls remain intact. Escape closes
+the drawer and returns focus to the toggle; clicking outside closes it without
+stealing focus from another control. Native menus keep their interaction and
+first Escape. Width caps and margins on the feed's nested wrappers are removed;
+the external script still owns masonry card layout and column counts.
+
+Without active masonry, in portrait/narrow windows, or after timeline/header
+replacement, native navigation is restored or re-detected automatically. Both
+script load orders are supported. Saved posts, settings, and the draggable
+bookmark panel are unaffected. Verified with offline native-shaped DOM/layout
+fixtures, **not a live logged-in X account**; future X/upstream DOM changes may
+require compatibility updates.
+
+### Masonry single-key background opening (v0.5.12)
+
+While a real primary masonry timeline is active, up to ten visible, exposed
+posts show badges **1 2 3 4 5 6 7 8 9 0**, in top-to-bottom, then left-to-right
+order. Press the displayed digit once to open that post's own permalink in a
+**new background tab**, without moving feed focus or scroll. No activation mode
+or Enter is needed. Extra visible cards are unlabelled. This also works in
+portrait/narrow masonry views, where the native sidebar is not changed.
+
+Badges are pointer-transparent overlays, not part of the masonry cards. They
+are reassigned after scrolling, resizing, and layout settlement. Keys recheck
+route, connected card and link identities, URL, geometry, and exposed patches
+before opening; a stale key does nothing until badges settle again. Quotes,
+recommendations, hidden/covered posts, status detail pages, open navigation
+drawers, and visible dialogs/menus/lightboxes do not receive active hints.
+
+Only unmodified digits are used, leaving native letter shortcuts/prefixes and
+existing **j/k, w/v/c, Space** unchanged. Typing, select/range, focused media,
+menus, modifiers, IME, and held repeats are ignored. A native **g** prefix and
+its immediate continuation pass through. Existing `GM_openInTab` permission,
+options (`active: false`, `insert: true`, `setParent: true`), and error feedback
+are reused, without `click()` or a foreground-tab fallback. Missing/failed APIs
+show an error; promise-returning APIs are not treated as synchronous acceptance
+for cancelling the digit event. Background behavior ultimately depends on the
+userscript manager. These safeguards are fixture-tested, not an exhaustive
+verification of live X's shortcut implementation.
+
+Quote presentation is left to X and the separate masonry userscript. Content
+shown as two visually linked cards stays in two cards; this integration does
+not restore, merge, move, or restyle quotes. Own-post keyboard targets exclude
+native inline quote timestamps as well as nested quote articles. If only a
+quoted permalink is available, the enclosing post receives no digit badge
+rather than opening that quoted target.
+
 ## Rust CLI (`xps-render`) Features
 
 `xps-render` ingests exported JSONL and renders per-post Markdown plus indexes.
@@ -246,6 +306,42 @@ node scripts/check-panel-browser.js
   copy/count, drag/reload, stored edge positions and resize clamping.
   `XPS_EVIDENCE` defaults to `/tmp/xps-circle-evidence` for ordered screenshots,
   a side-by-side preview and measurements. All network requests are blocked.
+
+- Optional offline Chromium masonry navigation fixture, using those same local
+  tool environment variables:
+
+```bash
+node scripts/check-masonry-browser.js
+```
+
+  Tests source and shipped bundle, both script load orders, late upstream CSS,
+  nested fixed-width navigation/feed wrappers, original controls/menus, inert
+  keyboard traversal, drawer toggling, viewport restoration, and SPA replacement.
+  Also verifies digit badges/background calls, key exhaustion, guards,
+  scrolling, occlusion, recycled cards/URLs, and stale-key/layout/route safety.
+  `XPS_EVIDENCE` defaults to `/tmp/xps-masonry-sidebar-evidence`; its `v2/`
+  directory contains before/full-feed/drawer/portrait/badge screenshots and
+  `masonry-measurements.json` with widths and simulated tab calls.
+  The fixture models upstream 1.7.7 layout rules; it never executes upstream
+  network/React patches or uses a live account. At widths 1000, 1280, 1440,
+  1920, and 2560 it verifies zero navigation reservation and full-width feed/
+  masonry containers, with no horizontal overflow or column-count changes.
+
+- Optional whole-upstream quote compatibility gate, using the same local browser
+  variables and an independently supplied local upstream userscript:
+
+```bash
+XPS_MASONRY_UPSTREAM="/absolute/path/to/masonry.user.js" \
+node scripts/check-masonry-quotes-browser.js
+```
+
+  Runs the complete external script unchanged in fresh, network-blocked offline
+  contexts, with source/bundle and both load orders. Tests inline and nested
+  quotes, media/delayed height changes, original linked-card node preservation,
+  no clipping/overlap, outer action-bar ownership, quote link reachability and
+  own-post digit targets. Evidence is under `XPS_EVIDENCE/v3-quotes/final/`.
+  The linked-card fixture is synthetic, not a captured live-X representation;
+  no React-derived quote navigation, video decoding, or live account is tested.
 
 ### Rust CLI
 

@@ -35,6 +35,9 @@ import {
 // so esbuild inlines it into the userscript rather than emitting a separate
 // file — a userscript can only inject a <style> element.
 import uiCss from './main.css';
+import { initMasonryNavigation } from './masonry-navigation.js';
+import { initMasonryHints } from './masonry-hints.js';
+import { isShortcutControl } from './keyboard.js';
 
 const STORAGE_KEY = 'xSavedPosts';
 const STORAGE_SYNC_KEY = 'xpsSync';
@@ -789,12 +792,23 @@ function ensurePanel() {
   updatePanelCount();
 }
 
+// Native inline quote cards need not have an embeddedTweet marker or article.
+// Ownership only: never move, restyle, merge, or recover their content.
+function isInsideInlineQuote(element, root = null) {
+  for (let box = element.closest('div[role="link"]'); box && box !== root;
+    box = box.parentElement?.closest('div[role="link"]')) {
+    if (box.querySelector('[data-testid="User-Name"]') &&
+        box.querySelector('[data-testid="tweetText"], [data-testid="card.wrapper"], [data-testid="tweetPhoto"], [data-testid="videoPlayer"], a[href*="/photo/"], a[href*="/video/"]')) return true;
+  }
+  return false;
+}
+
 function getTweetPermalink(tweetElement, { ownOnly = false } = {}) {
   const containerArticle =
     tweetElement instanceof Element && tweetElement.matches('article') ? tweetElement : null;
 
   function isOwnPermalink(link) {
-    if (!link || isInsideEmbeddedTweet(link) ||
+    if (!link || isInsideEmbeddedTweet(link) || isInsideInlineQuote(link, tweetElement) ||
         link.closest('[data-testid="card.wrapper"], [data-testid="tweetText"]')) return false;
     try {
       const url = new URL(link.getAttribute('href'), 'https://x.com');
@@ -896,7 +910,7 @@ function onPageScrollShortcut(event) {
       event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
   // Space should page the timeline even when a clicked action retains focus.
   // Preserve typing, media controls, and dialog keyboard interaction.
-  if (event.target instanceof Element && event.target.closest(`#${UI.panelId} > .xps-panel-toggle`)) return;
+  if (event.target instanceof Element && event.target.closest(`#${UI.panelId} > .xps-panel-toggle, .xps-nav-header, .xps-nav-toggle`)) return;
   const controls = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, dialog, [role="dialog"], [role="alertdialog"]';
   if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls)) ||
       document.querySelector('dialog[open], [aria-modal="true"]')) return;
@@ -916,8 +930,7 @@ function onPageScrollShortcut(event) {
 function onPostNavigationShortcut(event) {
   if (!['j', 'k'].includes(event.key) || event.shiftKey || event.ctrlKey || event.metaKey ||
       event.altKey || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
-  const controls = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, [data-testid="videoPlayer"], [data-testid="audioPlayer"], dialog, [role="dialog"], [role="alertdialog"]';
-  if ([event.target, document.activeElement].some((node) => node instanceof Element && node.closest(controls)) ||
+  if (isShortcutControl(event) ||
       document.querySelector('dialog[open], [aria-modal="true"]')) return;
 
   const scope = document.querySelector('[data-testid="primaryColumn"]') || document.querySelector('main') || document;
@@ -1004,21 +1017,31 @@ function onPostShortcut(event) {
   const url = getTweetPermalink(article, { ownOnly: true });
   if (!url) return;
 
+  openBackgroundPost(url, () => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  });
+}
+
+function openBackgroundPost(url, beforeOpen = () => {}) {
   const gm = /** @type {GlobalWithGM} */ (globalThis);
   if (typeof gm.GM_openInTab !== 'function') {
     toast('Background tabs require GM_openInTab. Update/re-enable X Post Saver in your userscript manager and allow its tab permission.', { type: 'error' });
-    return;
+    return false;
   }
-  event.preventDefault();
-  event.stopImmediatePropagation();
+  beforeOpen();
   const failed = () => toast('Could not open the background tab. Check your userscript manager’s tab permission and try again.', { type: 'error' });
   try {
     const result = gm.GM_openInTab(url, { active: false, insert: true, setParent: true });
     void Promise.resolve(result).then((tab) => {
       if (tab === null || tab === false) failed();
     }, failed);
+    // Digits only consume synchronous acceptance. Promise APIs may still reject.
+    return result !== null && result !== false &&
+      !(typeof result === 'object' && result && 'then' in result);
   } catch {
     failed();
+    return false;
   }
 }
 
@@ -1722,6 +1745,12 @@ function init() {
 
   ensureStyles();
   ensurePanel();
+  initMasonryNavigation();
+  initMasonryHints({
+    permalink: (article) => getTweetPermalink(article, { ownOnly: true }),
+    eligible: (node) => !isArticleReadView(node) && !isInsideEmbeddedTweet(node) && !isInsideInlineQuote(node),
+    openBackground: openBackgroundPost,
+  });
   document.addEventListener('keydown', onPageScrollShortcut, true);
   document.addEventListener('keydown', onPostNavigationShortcut, true);
   document.addEventListener('keydown', onPostShortcut, true);
