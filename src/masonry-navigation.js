@@ -94,7 +94,7 @@ export function initMasonryNavigation() {
   function reconcile() {
     queued = false;
     const nextSource = media.matches
-      ? document.querySelector('[data-testid="primaryColumn"] .xopt-masonry-container') : null;
+      ? document.querySelector('[data-testid="primaryColumn"] :is(.xps-masonry-container, .xopt-masonry-container)') : null;
     const candidate = nextSource ? document.querySelector('header[role="banner"]') : null;
     const nextHeader = candidate?.querySelector('nav') ? candidate : null;
     const nextSurface = nextHeader?.firstElementChild;
@@ -164,6 +164,7 @@ export function initMasonryNavigation() {
     })) schedule();
   }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
   media.addEventListener('change', schedule);
+  document.addEventListener('xps-masonry-change', schedule);
   document.addEventListener('keydown', (event) => {
     if (!open || event.key !== 'Escape' || event.defaultPrevented) return;
     if ([...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [data-testid="Dropdown"]')]

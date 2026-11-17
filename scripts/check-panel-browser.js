@@ -66,7 +66,7 @@ async function capture(page, name, expanded) {
   assert.equal(result.expanded, String(expanded));
   const { bounds: r, viewport: v } = result;
   assert.ok(r.x >= 8 && r.y >= 8 && r.right <= v.width - 7 && r.bottom <= v.height - 7, `${name}: panel within viewport`);
-  assert.equal(result.visibleControls.length, expanded ? 8 : 1);
+  assert.equal(result.visibleControls.length, expanded ? 9 : 1);
   if (!expanded) {
     assert.equal(r.width, 36);
     assert.equal(r.height, 36);

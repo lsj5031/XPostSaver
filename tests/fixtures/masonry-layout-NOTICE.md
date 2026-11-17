@@ -8,7 +8,9 @@ declarations from **🧱 X.com Masonry View 1.7.7**, published under `@license M
 
 The supplied upstream file contains no additional copyright notice. Its
 React, networking, and optimization implementation is not included or executed.
-XPostSaver's runtime compatibility and hint implementation is original.
+The navigation/hint compatibility implementation is original. Since v0.5.13,
+the separate built-in feed engine adapts relevant upstream layout/scroller
+logic; see `THIRD_PARTY_NOTICES.md` for that runtime attribution.
 
 ## MIT permission notice
 

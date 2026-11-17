@@ -9,13 +9,14 @@ let window;
 afterEach(() => window?.close());
 
 describe.each([['source', source], ['generated userscript', bundle]])('%s floating panel', (_name, code) => {
-  function setup() {
+  function setup(masonryEnabled = null) {
     window = new JSDOM('<main>Offline fixture</main>', { url: 'https://x.com/home', runScripts: 'outside-only' }).window;
     const storage = new Map([
       ['xSavedPosts', JSON.stringify([{ id: '123', url: 'https://x.com/person/status/123', text: 'Saved fixture' }])],
       ['xpsFactCheckTemplate', 'Existing custom template'],
       ['xpsPanelPosition', '{"x":120,"y":80}'],
     ]);
+    if (masonryEnabled !== null) storage.set('xpsMasonryEnabled', masonryEnabled);
     window.GM_getValue = (key) => storage.get(key);
     window.GM_setValue = vi.fn((key, value) => storage.set(key, value));
     window.scrollBy = vi.fn();
@@ -37,7 +38,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     toggle.click();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(controls.every((button) => !button.hidden)).toBe(true);
-    expect(controls.map((button) => button.textContent)).toEqual(['', 'Export (1)', 'Copy', 'Export URLs', 'Copy URLs', 'Clear', '核查设置']);
+    expect(controls.map((button) => button.textContent)).toEqual(['', 'Export (1)', 'Copy', 'Export URLs', 'Copy URLs', 'Clear', '核查设置', 'Masonry: On']);
     controls.find((button) => button.textContent === 'Copy URLs').click();
     await Promise.resolve();
     expect(writeText).toHaveBeenCalledWith('https://x.com/person/status/123\n');
@@ -52,6 +53,22 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     expect(panel.dataset.collapsed).toBe('true');
     expect([...storage]).toEqual(before);
     expect(window.GM_setValue).not.toHaveBeenCalled();
+  });
+
+  it('persists only the separate masonry preference and respects a disabled installation', () => {
+    const { storage, toggle, controls } = setup(false);
+    const saved = storage.get('xSavedPosts'), template = storage.get('xpsFactCheckTemplate');
+    const control = controls.find((button) => button.textContent === 'Masonry: Off');
+    expect(control.hidden).toBe(true);
+    toggle.click();
+    control.click();
+    expect(control.textContent).toBe('Masonry: On');
+    expect(control.getAttribute('aria-pressed')).toBe('true');
+    expect(storage.get('xpsMasonryEnabled')).toBe(true);
+    control.click();
+    expect(storage.get('xpsMasonryEnabled')).toBe(false);
+    expect(storage.get('xSavedPosts')).toBe(saved);
+    expect(storage.get('xpsFactCheckTemplate')).toBe(template);
   });
 
   it('allows native toggle Space without changing Space paging on other controls', () => {

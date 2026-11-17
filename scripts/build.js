@@ -27,7 +27,8 @@ const result = buildSync({
 });
 
 const code = result.outputFiles[0].text;
-const output = header + '\n' + code;
+const notice = readFileSync(join(root, 'THIRD_PARTY_NOTICES.md'), 'utf8');
+const output = header + '\n/*\n' + notice + '\n*/\n' + code;
 
 if (process.argv.includes('--check')) {
   const existing = readFileSync(join(root, 'x-post-saver-enhanced.user.js'), 'utf8');

@@ -1,4 +1,5 @@
 /* Specificity beats upstream's !important declarations in either load order. */
+html.xps-masonry-nav [data-testid="sidebarColumn"] { display: none !important; }
 html.xps-masonry-nav header[role="banner"].xps-nav-header {
   flex: 0 0 0px !important;
   width: 0 !important;

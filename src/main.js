@@ -37,6 +37,7 @@ import {
 import uiCss from './main.css';
 import { initMasonryNavigation } from './masonry-navigation.js';
 import { initMasonryHints } from './masonry-hints.js';
+import { initMasonry } from './masonry.js';
 import { isShortcutControl } from './keyboard.js';
 
 const STORAGE_KEY = 'xSavedPosts';
@@ -697,7 +698,7 @@ function wirePanelDragHandle(panel, handle) {
 
 }
 
-function ensurePanel() {
+function ensurePanel(masonry) {
   if (document.getElementById(UI.panelId)) return;
 
   const panel = document.createElement('div');
@@ -758,6 +759,15 @@ function ensurePanel() {
   factSettings.textContent = '核查设置';
   factSettings.addEventListener('click', factChecker.settings);
   panel.appendChild(factSettings);
+  const masonryToggle = document.createElement('button');
+  masonryToggle.type = 'button';
+  const labelMasonry = () => {
+    masonryToggle.textContent = `Masonry: ${masonry.enabled() ? 'On' : 'Off'}`;
+    masonryToggle.setAttribute('aria-pressed', String(masonry.enabled()));
+  };
+  labelMasonry();
+  masonryToggle.addEventListener('click', () => { masonry.toggle(); labelMasonry(); });
+  panel.appendChild(masonryToggle);
 
   const controls = Array.from(panel.children);
   for (const control of controls) {
@@ -1744,7 +1754,8 @@ function init() {
   if (window.self !== window.top) return;
 
   ensureStyles();
-  ensurePanel();
+  const masonry = initMasonry({ read: storageGet, write: storageSet });
+  ensurePanel(masonry);
   initMasonryNavigation();
   initMasonryHints({
     permalink: (article) => getTweetPermalink(article, { ownOnly: true }),

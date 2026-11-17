@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.12
+// @version      0.5.13
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -9,10 +9,48 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_openInTab
+// @grant        unsafeWindow
 // @run-at       document-end
 // @noframes
 // ==/UserScript==
 
+/*
+# X.com Masonry View
+
+The shortest-column layout and scoped virtual-scroller integration in
+`src/masonry.js` are adapted from X.com Masonry View v1.7.7, published under MIT.
+
+Source: https://greasyfork.org/en/scripts/597544-x-com-masonry-view
+Author/publisher identifier supplied by upstream:
+https://greasyfork.org/users/1292139
+
+The supplied v1.7.7 source has no `@author` or copyright line beyond this
+namespace and `@license MIT`. No copyright holder name or year is invented here.
+The complete permission notice follows and is also included in the built script.
+The unrelated upstream network, resource, scheduling and feed-GC patches are
+not included.
+
+## MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
@@ -728,6 +766,7 @@
 
   // src/masonry-navigation.css
   var masonry_navigation_default = `/* Specificity beats upstream's !important declarations in either load order. */
+html.xps-masonry-nav [data-testid="sidebarColumn"] { display: none !important; }
 html.xps-masonry-nav header[role="banner"].xps-nav-header {
   flex: 0 0 0px !important;
   width: 0 !important;
@@ -902,7 +941,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     __name(reset, "reset");
     function reconcile() {
       queued = false;
-      const nextSource = media.matches ? document.querySelector('[data-testid="primaryColumn"] .xopt-masonry-container') : null;
+      const nextSource = media.matches ? document.querySelector('[data-testid="primaryColumn"] :is(.xps-masonry-container, .xopt-masonry-container)') : null;
       const candidate = nextSource ? document.querySelector('header[role="banner"]') : null;
       const nextHeader = candidate?.querySelector("nav") ? candidate : null;
       const nextSurface = nextHeader?.firstElementChild;
@@ -979,6 +1018,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       })) schedule();
     }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true });
     media.addEventListener("change", schedule);
+    document.addEventListener("xps-masonry-change", schedule);
     document.addEventListener("keydown", (event) => {
       if (!open || event.key !== "Escape" || event.defaultPrevented) return;
       if ([...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [data-testid="Dropdown"]')].some((layer) => layer.getClientRects().length && getComputedStyle(layer).visibility !== "hidden")) return;
@@ -1020,7 +1060,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       if (document.hidden || /\/status\/\d+(?:\/|$)/.test(location.pathname) || document.documentElement.classList.contains("xopt-status-detail") || document.querySelector(".xps-nav-open")) return null;
       const layers = document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"], [data-testid="Dropdown"], [popover]:popover-open');
       if ([...layers].some((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")) return null;
-      return document.querySelector('[data-testid="primaryColumn"] .xopt-masonry-container');
+      return document.querySelector('[data-testid="primaryColumn"] :is(.xps-masonry-container, .xopt-masonry-container)');
     }
     __name(feed, "feed");
     function cards() {
@@ -1145,6 +1185,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     window.navigation?.addEventListener("currententrychange", invalidate);
     document.addEventListener("visibilitychange", invalidate);
     document.addEventListener("xps-navigation-change", invalidate);
+    document.addEventListener("xps-masonry-change", invalidate);
     document.fonts?.addEventListener("loadingdone", invalidate);
     for (const name of ["load", "transitionrun", "transitionend", "animationstart", "animationend"]) document.addEventListener(name, invalidate, true);
     document.addEventListener("keydown", (event) => {
@@ -1173,6 +1214,322 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     invalidate();
   }
   __name(initMasonryHints, "initMasonryHints");
+
+  // src/masonry.css
+  var masonry_default = '.xps-masonry-container {\n  display: block !important;\n  position: relative !important;\n  height: var(--xps-feed-height, auto) !important;\n  min-height: 0 !important;\n  padding: 0 !important;\n  overflow-anchor: none;\n}\n.xps-masonry-container > .xps-masonry-item {\n  position: absolute !important;\n  top: 0 !important;\n  left: 0 !important;\n  right: auto !important;\n  bottom: auto !important;\n  transform: translate(var(--xps-card-x, 0px), var(--xps-card-y, 0px)) !important;\n  width: var(--xps-card-width) !important;\n  max-width: var(--xps-card-width) !important;\n  height: auto !important;\n  min-height: 0 !important;\n  max-height: none !important;\n  margin: 0 !important;\n  box-sizing: border-box !important;\n  min-width: 0 !important;\n}\n.xps-masonry-item img, .xps-masonry-item video { max-width: 100%; }\n.xps-masonry-item :is(article[role="article"], [data-testid="tweet"]) {\n  max-width: 100% !important;\n  box-sizing: border-box;\n}\n.xps-masonry-item > article, .xps-masonry-item > [data-testid="tweet"] {\n  width: 100% !important;\n  max-width: none !important;\n  box-sizing: border-box;\n}\n';
+
+  // src/masonry.js
+  var POST = 'article[role="article"], [data-testid="tweet"]';
+  var LIMIT = 120;
+  function outerPosts(root) {
+    return [...root.querySelectorAll(POST)].filter((post) => {
+      const owner = post.parentElement?.closest(POST);
+      return !owner || !root.contains(owner);
+    });
+  }
+  __name(outerPosts, "outerPosts");
+  function masonryPositions(heights, columns, width, gap = 12, fullRows = /* @__PURE__ */ new Set()) {
+    const bottoms = Array(columns).fill(0);
+    const cardWidth = (width - gap * (columns - 1)) / columns;
+    const positions = heights.map((height, index) => {
+      if (fullRows.has(index)) {
+        const top2 = Math.max(...bottoms);
+        if (height) bottoms.fill(top2 + height + gap);
+        return { top: top2, left: 0, width };
+      }
+      const column = bottoms.indexOf(Math.min(...bottoms));
+      const top = bottoms[column];
+      if (height) bottoms[column] += height + gap;
+      return { top, left: column * (cardWidth + gap), width: cardWidth };
+    });
+    return { positions, height: Math.max(0, ...bottoms) };
+  }
+  __name(masonryPositions, "masonryPositions");
+  function initMasonry({ read, write }) {
+    const style = document.createElement("style");
+    style.textContent = masonry_default;
+    document.head.append(style);
+    const preference = read("xpsMasonryEnabled");
+    let enabled2 = preference !== false && preference !== "false";
+    let active = null;
+    let bridge = null;
+    let timer = 0;
+    let lastPath = location.pathname;
+    let lastFetch = 0;
+    let fetchTimer = 0;
+    let viewportDirty = true;
+    const observed = /* @__PURE__ */ new Set();
+    const sizes = /* @__PURE__ */ new Map();
+    const fullRows = /* @__PURE__ */ new Set();
+    const rejected = /* @__PURE__ */ new WeakSet();
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
+    const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    function release() {
+      window.clearTimeout(fetchTimer);
+      fetchTimer = 0;
+      resize?.disconnect();
+      for (const child of observed) clearChild(child);
+      observed.clear();
+      const scroller = bridge?.scroller;
+      if (bridge) {
+        for (const [name, entry] of bridge.originals) {
+          if (bridge.scroller[name] !== entry.installed) continue;
+          if (entry.own) bridge.scroller[name] = entry.value;
+          else delete bridge.scroller[name];
+        }
+        bridge = null;
+      }
+      if (active) {
+        active.classList.remove("xps-masonry-container");
+        active.style.removeProperty("--xps-feed-height");
+        for (const child of active.children) clearChild(child);
+      }
+      active = null;
+      sizes.clear();
+      fullRows.clear();
+      document.dispatchEvent(new Event("xps-masonry-change"));
+      try {
+        scroller?._handleScroll();
+      } catch {
+      }
+    }
+    __name(release, "release");
+    function clearChild(child) {
+      child.classList.remove("xps-masonry-item");
+      for (const name of ["--xps-card-x", "--xps-card-y", "--xps-card-width"]) child.style.removeProperty(name);
+    }
+    __name(clearChild, "clearChild");
+    function discover() {
+      const primary = document.querySelector('[data-testid="primaryColumn"]');
+      if (!primary) return null;
+      let best = null, count = 1;
+      for (const post of outerPosts(primary).slice(0, 16)) {
+        for (let node = post.parentElement, depth = 0; node && node !== primary && depth < 9; node = node.parentElement, depth++) {
+          const n = [...node.children].filter((child) => child.matches(POST) || outerPosts(child).length === 1).length;
+          if (n > count) {
+            best = node;
+            count = n;
+          }
+        }
+      }
+      return best;
+    }
+    __name(discover, "discover");
+    function refresh(scroller) {
+      try {
+        if (typeof scroller._measureRelativeViewportRect === "function" && typeof scroller._getAnchor === "function" && typeof scroller._updateRenderedItems === "function") {
+          const rect = scroller._measureRelativeViewportRect();
+          scroller._updateRenderedItems(scroller._getAnchor(rect), rect);
+          return;
+        }
+      } catch {
+      }
+      try {
+        scroller._handleScroll();
+      } catch {
+        if (active) rejected.add(active);
+        schedule();
+      }
+    }
+    __name(refresh, "refresh");
+    function connect(container) {
+      const native = page.document.querySelector("[data-xps-scroller]");
+      if (!native) return null;
+      const key = Object.keys(native).find((name) => name.startsWith("__reactFiber$"));
+      let fiber = key ? native[key] : null;
+      let scroller = null, fetch = null;
+      for (let depth = 0; fiber && depth < 80; depth++, fiber = fiber.return) {
+        if (!scroller && typeof fiber.stateNode?._getRenderCandidates === "function") scroller = fiber.stateNode;
+        const props = fiber.memoizedProps || fiber.stateNode?.props;
+        if (!fetch && typeof props?.onNearBottom === "function") fetch = /* @__PURE__ */ __name(() => props.onNearBottom(), "fetch");
+        if (!fetch && typeof props?.onNearEnd === "function") fetch = /* @__PURE__ */ __name(() => props.onNearEnd(), "fetch");
+      }
+      if (!scroller || !fetch || typeof scroller._handleScroll !== "function") return null;
+      const state = { scroller, fetch, originals: /* @__PURE__ */ new Map(), start: 0, total: 0 };
+      const replace = /* @__PURE__ */ __name((name, installed) => {
+        state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
+        scroller[name] = installed;
+      }, "replace");
+      const original = scroller._getRenderCandidates;
+      const candidates = /* @__PURE__ */ __name(function(...args) {
+        const result = original.apply(scroller, args);
+        if (bridge !== state) return result;
+        if (!Array.isArray(result?.allItemsWithPositions) || !result.slice || !Array.isArray(result.newRenderedItems)) {
+          rejected.add(container);
+          schedule();
+          return result;
+        }
+        state.total = result.allItemsWithPositions.length;
+        const width = container.clientWidth;
+        const columns = Math.max(1, Math.floor((width + 12) / 332));
+        const layout = masonryPositions(Array.from({ length: state.total }, (_, i) => sizes.get(i) ?? 320), columns, width, 12, fullRows);
+        const y = Math.max(0, -container.getBoundingClientRect().top);
+        let start = layout.positions.findIndex((p, i) => p.top + (sizes.get(i) || 320) >= y - 800);
+        if (start < 0) start = Math.max(0, state.total - LIMIT);
+        const end = Math.min(state.total, start + LIMIT);
+        state.start = start;
+        schedule();
+        return {
+          ...result,
+          newRenderedItems: result.allItemsWithPositions.slice(start, end),
+          slice: { start, end },
+          arePreferredItemsRendered: true
+        };
+      }, "candidates");
+      try {
+        replace("_getRenderCandidates", candidates);
+        if (typeof scroller._getIsHeightsReady === "function") replace("_getIsHeightsReady", () => true);
+      } catch {
+        for (const [name, entry] of state.originals) {
+          if (scroller[name] === entry.installed) {
+            if (entry.own) scroller[name] = entry.value;
+            else delete scroller[name];
+          }
+        }
+        return null;
+      }
+      return state;
+    }
+    __name(connect, "connect");
+    function apply() {
+      timer = 0;
+      lastPath = location.pathname;
+      const detail = /\/status\/\d+(?:\/|$)/.test(lastPath);
+      if (!enabled2 || detail || innerWidth < 700 || !resize) {
+        if (active) release();
+        return;
+      }
+      if (document.querySelector(".xopt-masonry-container")) {
+        if (active) release();
+        return;
+      }
+      const container = discover();
+      if (active && active !== container) release();
+      if (!container || rejected.has(container)) {
+        if (active) release();
+        return;
+      }
+      if (!active) {
+        const virtual = [...container.children].some((child) => {
+          const s = getComputedStyle(child);
+          return s.position === "absolute" || s.transform !== "none";
+        });
+        if (virtual) {
+          container.setAttribute("data-xps-scroller", "");
+          try {
+            bridge = connect(container);
+          } catch {
+            bridge = null;
+          }
+          container.removeAttribute("data-xps-scroller");
+          if (!bridge) {
+            rejected.add(container);
+            return;
+          }
+        }
+        active = container;
+        active.classList.add("xps-masonry-container");
+        document.dispatchEvent(new Event("xps-masonry-change"));
+        viewportDirty = true;
+      }
+      if (bridge && viewportDirty) refresh(bridge.scroller);
+      viewportDirty = false;
+      const children = [...container.children];
+      const width = container.clientWidth;
+      const columns = Math.max(1, Math.floor((width + 12) / 332));
+      const cardWidth = (width - (columns - 1) * 12) / columns;
+      const wanted = /* @__PURE__ */ new Set();
+      children.forEach((child) => {
+        child.classList.add("xps-masonry-item");
+        const hasPost = child.matches(POST) || outerPosts(child).length > 0;
+        child.style.setProperty("--xps-card-width", `${hasPost ? cardWidth : width}px`);
+        wanted.add(child);
+      });
+      for (const child of observed) if (!wanted.has(child)) {
+        resize.unobserve(child);
+        clearChild(child);
+        observed.delete(child);
+      }
+      for (const child of wanted) if (!observed.has(child)) {
+        observed.add(child);
+        resize.observe(child);
+      }
+      let changed = false;
+      const heights = children.map((child, i) => {
+        const height = Math.ceil(child.getBoundingClientRect().height);
+        const index = (bridge?.start || 0) + i;
+        if (child.matches(POST) || outerPosts(child).length) fullRows.delete(index);
+        else fullRows.add(index);
+        if (sizes.get(index) !== height) {
+          sizes.set(index, height);
+          changed = true;
+        }
+        return height;
+      });
+      while (sizes.size > 2e3) {
+        const key = sizes.keys().next().value;
+        sizes.delete(key);
+        fullRows.delete(key);
+      }
+      const layout = masonryPositions(bridge ? Array.from({ length: bridge.total }, (_, i) => sizes.get(i) ?? 320) : heights, columns, width, 12, fullRows);
+      children.forEach((child, i) => {
+        const position = layout.positions[(bridge?.start || 0) + i];
+        if (!position) return;
+        child.style.setProperty("--xps-card-x", `${position.left}px`);
+        child.style.setProperty("--xps-card-y", `${position.top}px`);
+      });
+      container.style.setProperty("--xps-feed-height", `${layout.height}px`);
+      if (bridge && changed) refresh(bridge.scroller);
+      const remaining = container.getBoundingClientRect().bottom - innerHeight;
+      if (bridge?.fetch && remaining < 1800) {
+        const wait = 1200 - (Date.now() - lastFetch);
+        if (wait <= 0) {
+          lastFetch = Date.now();
+          try {
+            bridge.fetch();
+          } catch {
+          }
+        } else if (!fetchTimer) {
+          fetchTimer = window.setTimeout(() => {
+            fetchTimer = 0;
+            schedule();
+          }, wait + 1);
+        }
+      }
+    }
+    __name(apply, "apply");
+    function schedule() {
+      if (!timer) timer = window.setTimeout(apply, 60);
+    }
+    __name(schedule, "schedule");
+    new MutationObserver((records) => {
+      if (records.some((r) => [...r.addedNodes, ...r.removedNodes].some((n) => n instanceof Element && !n.closest("#xps-masonry-keys, #xps-panel") && !n.matches(".xps-nav-toggle, #xps-masonry-keys")))) schedule();
+    }).observe(document.body, { subtree: true, childList: true });
+    window.addEventListener("resize", () => {
+      viewportDirty = true;
+      schedule();
+    });
+    window.addEventListener("scroll", () => {
+      viewportDirty = true;
+      schedule();
+    }, { passive: true });
+    window.addEventListener("popstate", schedule);
+    window.setInterval(() => {
+      if (lastPath !== location.pathname || !active?.isConnected) schedule();
+    }, 350);
+    schedule();
+    return {
+      enabled: /* @__PURE__ */ __name(() => enabled2, "enabled"),
+      toggle() {
+        enabled2 = !enabled2;
+        write("xpsMasonryEnabled", enabled2);
+        if (!enabled2) release();
+        schedule();
+        return enabled2;
+      }
+    };
+  }
+  __name(initMasonry, "initMasonry");
 
   // src/main.js
   var STORAGE_KEY = "xSavedPosts";
@@ -1774,7 +2131,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     });
   }
   __name(wirePanelDragHandle, "wirePanelDragHandle");
-  function ensurePanel() {
+  function ensurePanel(masonry) {
     if (document.getElementById(UI.panelId)) return;
     const panel = document.createElement("div");
     panel.id = UI.panelId;
@@ -1824,6 +2181,18 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     factSettings.textContent = "\u6838\u67E5\u8BBE\u7F6E";
     factSettings.addEventListener("click", factChecker.settings);
     panel.appendChild(factSettings);
+    const masonryToggle = document.createElement("button");
+    masonryToggle.type = "button";
+    const labelMasonry = /* @__PURE__ */ __name(() => {
+      masonryToggle.textContent = `Masonry: ${masonry.enabled() ? "On" : "Off"}`;
+      masonryToggle.setAttribute("aria-pressed", String(masonry.enabled()));
+    }, "labelMasonry");
+    labelMasonry();
+    masonryToggle.addEventListener("click", () => {
+      masonry.toggle();
+      labelMasonry();
+    });
+    panel.appendChild(masonryToggle);
     const controls2 = Array.from(panel.children);
     for (const control of controls2) {
       if (control instanceof HTMLElement) control.hidden = true;
@@ -2612,7 +2981,8 @@ ${longform}`;
   function init() {
     if (window.self !== window.top) return;
     ensureStyles();
-    ensurePanel();
+    const masonry = initMasonry({ read: storageGet, write: storageSet });
+    ensurePanel(masonry);
     initMasonryNavigation();
     initMasonryHints({
       permalink: /* @__PURE__ */ __name((article) => getTweetPermalink(article, { ownOnly: true }), "permalink"),

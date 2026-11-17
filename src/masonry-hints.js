@@ -21,7 +21,7 @@ export function initMasonryHints({ permalink, eligible, openBackground }) {
         document.querySelector('.xps-nav-open')) return null;
     const layers = document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"], [data-testid="Dropdown"], [popover]:popover-open');
     if ([...layers].some((node) => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')) return null;
-    return document.querySelector('[data-testid="primaryColumn"] .xopt-masonry-container');
+    return document.querySelector('[data-testid="primaryColumn"] :is(.xps-masonry-container, .xopt-masonry-container)');
   }
 
   function cards() {
@@ -131,6 +131,7 @@ export function initMasonryHints({ permalink, eligible, openBackground }) {
   /** @type {Window & {navigation?: EventTarget}} */ (window).navigation?.addEventListener('currententrychange', invalidate);
   document.addEventListener('visibilitychange', invalidate);
   document.addEventListener('xps-navigation-change', invalidate);
+  document.addEventListener('xps-masonry-change', invalidate);
   document.fonts?.addEventListener('loadingdone', invalidate);
   for (const name of ['load', 'transitionrun', 'transitionend', 'animationstart', 'animationend']) document.addEventListener(name, invalidate, true);
   document.addEventListener('keydown', (event) => {

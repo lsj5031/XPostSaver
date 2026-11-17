@@ -84,14 +84,27 @@ Extraction behavior details:
   - `核查设置`: edits the fact-check prompt template
 - Toast notifications for success/error states.
 
-### Compact masonry navigation (v0.5.12)
+### Standalone masonry and compact navigation (v0.5.13)
 
-Install **both** X Post Saver and the separate
-[🧱 X.com Masonry View](https://greasyfork.org/en/scripts/597544-x-com-masonry-view)
-userscript (compatibility targets 1.7.7). X Post Saver does not install, copy, or
-implement masonry, and does not adopt its network patches or React hooks.
+Install **ONE script, X Post Saver**. Masonry is built in and **on by default**.
+Remove the separate X.com Masonry View script; reinstalling it is not required.
+The expanded bookmark panel has a **Masonry: On/Off** recovery control. Its
+separate `xpsMasonryEnabled` setting does not replace saved posts or settings.
+Cards use shortest-column placement, with approximately 320px minimum widths,
+and revert to native layout below 700px. Native status/detail pages stay native.
 
-When that script has activated a connected masonry timeline, landscape windows
+The relevant layout/scroller logic is adapted from MIT X.com Masonry View 1.7.7,
+not its network blocking, feed GC, global scheduling or media-resource hacks.
+See [third-party notice](THIRD_PARTY_NOTICES.md). No remote runtime code is loaded.
+The `unsafeWindow` grant accesses only the active timeline's React-scroller
+capabilities through the userscript manager, without inline CSP injection.
+Instance hooks are restored on route/disable/container replacement. Unsupported
+absolute virtualizers remain native instead of freezing their navigation.
+Rendering is windowed to at most 120 virtual items; unloaded/unmeasured item
+heights are estimated until mounted. Very long timelines can shift as estimates
+are replaced by measurements. Native quotes are neither moved nor reconstructed.
+
+When a connected masonry timeline is active, landscape windows
 at least 1000px wide give the **entire available width to the feed**, with zero
 sidebar reservation. A floating **☰** button (44px target, no letter shortcut)
 opens the original navigation in a 280px scrollable overlay without moving the
@@ -101,16 +114,17 @@ unread badges, compose, account, and More controls remain intact. Escape closes
 the drawer and returns focus to the toggle; clicking outside closes it without
 stealing focus from another control. Native menus keep their interaction and
 first Escape. Width caps and margins on the feed's nested wrappers are removed;
-the external script still owns masonry card layout and column counts.
+the built-in engine owns masonry placement and responsive column counts.
 
 Without active masonry, in portrait/narrow windows, or after timeline/header
 replacement, native navigation is restored or re-detected automatically. Both
-script load orders are supported. Saved posts, settings, and the draggable
+external-script load orders are supported cheaply when its engine is already
+active, without a second layout/scroller hook. Saved posts, settings, and the draggable
 bookmark panel are unaffected. Verified with offline native-shaped DOM/layout
 fixtures, **not a live logged-in X account**; future X/upstream DOM changes may
 require compatibility updates.
 
-### Masonry single-key background opening (v0.5.12)
+### Masonry single-key background opening (v0.5.13)
 
 While a real primary masonry timeline is active, up to ten visible, exposed
 posts show badges **1 2 3 4 5 6 7 8 9 0**, in top-to-bottom, then left-to-right
@@ -137,7 +151,7 @@ for cancelling the digit event. Background behavior ultimately depends on the
 userscript manager. These safeguards are fixture-tested, not an exhaustive
 verification of live X's shortcut implementation.
 
-Quote presentation is left to X and the separate masonry userscript. Content
+Quote presentation is left to X's native content. Content
 shown as two visually linked cards stays in two cards; this integration does
 not restore, merge, move, or restyle quotes. Own-post keyboard targets exclude
 native inline quote timestamps as well as nested quote articles. If only a
@@ -183,6 +197,8 @@ Rendering details:
 
 ## Installation
 
+Current userscript release: **0.5.13**. See [changelog](CHANGELOG.md).
+
 ### Userscript
 
 1. Install a userscript manager:
@@ -190,6 +206,8 @@ Rendering details:
    - [Violentmonkey](https://violentmonkey.github.io/)
    - [Greasemonkey](https://www.greasespot.net/)
 2. Install `x-post-saver-enhanced.user.js` in your userscript manager.
+   This is the only userscript needed, including masonry. Remove the former
+   separate masonry script if installed.
 
 ### Rust CLI
 
@@ -307,7 +325,23 @@ node scripts/check-panel-browser.js
   `XPS_EVIDENCE` defaults to `/tmp/xps-circle-evidence` for ordered screenshots,
   a side-by-side preview and measurements. All network requests are blocked.
 
-- Optional offline Chromium masonry navigation fixture, using those same local
+- Standalone offline Chromium acceptance gate, using those same local tools:
+
+```bash
+node scripts/check-standalone-masonry-browser.js
+```
+
+  Injects only source or the shipped XPostSaver bundle into a native one-column,
+  absolute/transformed synthetic virtual list. No external script, CSS or
+  `.xopt` class is supplied. Measures unequal-height columns, full width at
+  1000/1440/1920/2560, intact nested quotes, non-overlap, real digit key background
+  calls, native drawer controls, delayed media, item/container replacement,
+  synthetic load-more, bounded rendered DOM, detail/back and toggle restoration,
+  delayed mount and unsupported-scroller fallback. Evidence is written to
+  `XPS_EVIDENCE` (default `/tmp/xps-standalone-evidence`).
+  This does **not** validate live X pagination or a real userscript sandbox.
+
+- Optional external-layout compatibility/navigation fixture, using those same local
   tool environment variables:
 
 ```bash
