@@ -157,6 +157,9 @@ export function initMasonry({ read, write, permalink }) {
   let lastFetch = 0;
   let fetchTimer = 0;
   let viewportDirty = true;
+  let layoutDirty = true;
+  let containerWidth = 0;
+  let refreshFrame = 0;
   const observed = new Set();
   let placement = createMasonryLayout();
   let visualPlacement = createMasonryLayout();
@@ -189,13 +192,20 @@ export function initMasonry({ read, write, permalink }) {
     if (!retryTimer && delay) retryTimer = window.setTimeout(() => { retryTimer = 0; schedule(); }, delay);
   }
   function wake() {
+    layoutDirty = true;
     if (!retryTimer) retryCount = 0;
     schedule();
   }
-  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
+    // Our feed-height writes do not invalidate card geometry; parent-width
+    // changes do, even when fixed-width cards have not resized yet.
+    if (entries.some((entry) => entry.target !== active) || active?.clientWidth !== containerWidth) wake();
+  }) : null;
   const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
   function release() {
+    if (refreshFrame) cancelAnimationFrame(refreshFrame);
+    refreshFrame = 0;
     window.clearTimeout(fetchTimer);
     fetchTimer = 0;
     resize?.disconnect();
@@ -216,6 +226,7 @@ export function initMasonry({ read, write, permalink }) {
       for (const child of active.children) clearChild(child);
     }
     active = null;
+    layoutDirty = true;
     placement = createMasonryLayout();
     visualPlacement = createMasonryLayout();
     activeRoute = '';
@@ -242,6 +253,14 @@ export function initMasonry({ read, write, permalink }) {
   }
 
   function refresh(scroller) {
+    if (refreshFrame) return;
+    refreshFrame = requestAnimationFrame(() => {
+      refreshFrame = 0;
+      if (bridge?.scroller === scroller) refreshNow(scroller);
+    });
+  }
+
+  function refreshNow(scroller) {
     try {
       if (typeof scroller._measureRelativeViewportRect === 'function' &&
           typeof scroller._getAnchor === 'function' &&
@@ -278,8 +297,10 @@ export function initMasonry({ read, write, permalink }) {
     bridgeReason = !scroller ? 'waiting for native scroller' : !fetch ?
       'waiting for native pagination callback' : 'unsupported: native scroll method missing';
     if (!scroller || !fetch || typeof scroller._handleScroll !== 'function') return null;
-    const state = { scroller, fetch, originals: new Map(), items:[], rendered:[], geometry:{ positions:[], heights:[] },
-      start:0 };
+    /** @typedef {{key:string|symbol, post?:string, entry:unknown, height:number}} WindowItem */
+    const state = { scroller, fetch, originals: new Map(),
+      items:/** @type {WindowItem[]} */ ([]), rendered:/** @type {WindowItem[]} */ ([]), geometry:{ positions:[], heights:[] },
+      start:0, width:0, geometryDirty:true };
     const replace = (name, installed) => {
       state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
       scroller[name] = installed;
@@ -298,28 +319,40 @@ export function initMasonry({ read, write, permalink }) {
       const parsedEntries = result.allItemsWithPositions.map(masonryEntry);
       const counts = new Map();
       for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
-      const items = result.allItemsWithPositions.map((entry, index) => {
+      const next = result.allItemsWithPositions.map((entry, index) => {
         const parsed = parsedEntries[index];
         if (parsed && counts.get(parsed.key) === 1) return { ...parsed,
           height:state.estimatedHeight ?? parsed.height };
-        // Opaque/repeated native entries are valid renderer input, not evidence
-        // of post ownership. Fresh keys prevent recycled slots inheriting cache.
-        return { key:Symbol(`native slot ${index}`), entry,
+        // Slot keys are only for estimated window geometry, never post ownership
+        // or cached DOM measurements. Local visual layout remains permissive.
+        return { key:typeof state.items[index]?.key === 'symbol' ? state.items[index].key : Symbol(`native slot ${index}`), entry,
           height:state.estimatedHeight ?? (Number.isFinite(entry?.height) && entry.height > 0 ? entry.height : 320) };
       });
-      state.items = items;
+      const changed = next.length !== state.items.length || next.some((item, i) =>
+        item.key !== state.items[i].key || item.height !== state.items[i].height);
+      if (changed) {
+        state.items = next;
+        state.geometryDirty = true;
+      }
+      const items = state.items;
       const width = container.clientWidth;
       if (!Number.isFinite(width) || width <= 0) return result;
-      const layout = placement.update(items, width);
-      state.geometry = layout;
+      const dirty = state.geometryDirty || state.width !== width;
+      if (dirty) {
+        state.geometry = placement.update(items, width);
+        state.width = width;
+        state.geometryDirty = false;
+      }
+      const layout = state.geometry;
       const y = Math.max(0, -container.getBoundingClientRect().top);
       const slice = masonryWindow(layout, y, innerHeight);
       if (!slice) { reject(container, 'unsupported: visible window exceeds safe limit'); return result; }
       // Like .13, keep native entries and coordinate schemas untouched.
       const positioned = result.allItemsWithPositions;
+      const windowChanged = slice.start !== state.start || slice.end - slice.start !== state.rendered.length;
       state.rendered = items.slice(slice.start, slice.end);
       state.start = slice.start;
-      schedule();
+      if (dirty || windowChanged) wake();
       return { ...result, allItemsWithPositions:positioned, newRenderedItems:positioned.slice(slice.start, slice.end),
         slice, arePreferredItemsRendered: true };
     };
@@ -356,7 +389,7 @@ export function initMasonry({ read, write, permalink }) {
     if (active && activeRoute !== lastRoute) release();
     // A separately installed external engine owns its layout, never patch it twice.
     if (document.querySelector('.xopt-masonry-container')) { if (active) release(); setStatus('active: external engine'); return; }
-    const container = discover();
+    const container = !layoutDirty && active?.isConnected ? active : discover();
     if (active && active !== container) release();
     if (!container || rejected.has(container)) {
       if (active) release();
@@ -378,11 +411,13 @@ export function initMasonry({ read, write, permalink }) {
       window.clearTimeout(retryTimer); retryTimer = 0;
       retryContainer = null; retryCount = 0;
       active = container;
+      resize.observe(container);
       activeRoute = lastRoute;
       viewportDirty = true;
+      layoutDirty = true;
     }
     if (bridge && viewportDirty) {
-      const layout = placement.update(bridge.items, container.clientWidth);
+      const layout = bridge.geometry;
       const slice = masonryWindow(layout, Math.max(0, -container.getBoundingClientRect().top), innerHeight);
       const wanted = slice && bridge.items.slice(slice.start, slice.end);
       if (!bridge.items.length || !wanted || wanted.length !== bridge.rendered.length ||
@@ -390,8 +425,14 @@ export function initMasonry({ read, write, permalink }) {
       if (rejected.has(container)) { release(); setStatus(rejected.get(container)); return; }
     }
     viewportDirty = false;
+    if (!layoutDirty) {
+      checkNearEnd(container);
+      return;
+    }
+    layoutDirty = false;
     const children = [...container.children];
     const width = container.clientWidth;
+    containerWidth = width;
     if (!Number.isFinite(width) || width <= 0) return;
     const columns = Math.max(1, Math.floor((width + 12) / 332));
     const cardWidth = (width - (columns - 1) * 12) / columns;
@@ -442,9 +483,11 @@ export function initMasonry({ read, write, permalink }) {
       observed.delete(child);
     }
     for (const child of wanted) if (!observed.has(child)) { observed.add(child); resize.observe(child); }
+    const measured = new Map();
     cells.forEach(({ child, item, fullRow }) => {
       if (!item) return;
       const height = Math.ceil(child.getBoundingClientRect().height);
+      measured.set(child, height);
       if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow);
     });
     const layout = renderer.update(items, width);
@@ -452,10 +495,13 @@ export function initMasonry({ read, write, permalink }) {
     // current card-height average to keep native window estimates useful even
     // when the site's original one-column heights differ greatly at this width.
     const cardHeights = local && bridge ? cells.filter((cell) => !cell.fullRow)
-      .map(({ child }) => Math.ceil(child.getBoundingClientRect().height)).filter((height) => height > 0 && Number.isFinite(height)) : [];
+      .map(({ child }) => measured.get(child)).filter((height) => height > 0 && Number.isFinite(height)) : [];
     const estimate = cardHeights.length ? Math.ceil(cardHeights.reduce((sum, height) => sum + height, 0) / cardHeights.length) : null;
     const estimateChanged = estimate !== null && bridge.estimatedHeight !== estimate;
-    if (estimateChanged) bridge.estimatedHeight = estimate;
+    if (estimateChanged) {
+      bridge.estimatedHeight = estimate;
+      bridge.geometryDirty = true;
+    }
     const geometryChanged = bridge && !local && (layout.positions.length !== bridge.geometry.positions.length ||
       layout.positions.some((p, i) => p.top !== bridge.geometry.positions[i].top || layout.heights[i] !== bridge.geometry.heights[i]));
     const offset = local && bridge ? Math.min(...bridge.geometry.positions.slice(bridge.start,
@@ -472,7 +518,12 @@ export function initMasonry({ read, write, permalink }) {
       local && bridge ? bridge.geometry.height : 0)}px`);
     setStatus('active');
     if (layoutChanged) document.dispatchEvent(new Event('xps-masonry-change'));
+    if (bridge && !local) bridge.geometry = layout;
     if (geometryChanged || estimateChanged) refresh(bridge.scroller);
+    checkNearEnd(container);
+  }
+
+  function checkNearEnd(container) {
     const remaining = container.getBoundingClientRect().bottom - innerHeight;
     if (bridge?.fetch && remaining < 1800) {
       const wait = 1200 - (Date.now() - lastFetch);
@@ -491,13 +542,14 @@ export function initMasonry({ read, write, permalink }) {
   new MutationObserver((records) => {
     if (records.some((r) => (r.type === 'attributes' && r.target instanceof Element &&
       r.target.closest('[data-testid="primaryColumn"]')) || [...r.addedNodes, ...r.removedNodes].some((n) =>
-      n instanceof Element && !n.closest('#xps-masonry-keys, #xps-panel') &&
+      n instanceof Element && !n.closest('#xps-masonry-keys, #xps-panel, .xps-save-btn, .xps-fact-btn') &&
       !n.matches('.xps-nav-toggle, #xps-masonry-keys')))) wake();
   }).observe(document.body, { subtree: true, childList: true, attributes:true, attributeFilter:['href'] });
   window.addEventListener('resize', () => { viewportDirty = true; wake(); });
   window.addEventListener('scroll', () => {
     viewportDirty = true;
-    wake();
+    if (!active) wake();
+    else schedule();
   }, { passive: true });
   window.addEventListener('popstate', wake);
   // No history/global monkey patch. Also catches pushState and delayed mounts.

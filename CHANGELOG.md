@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.18
+
+- Reuse native window geometry until list identities, estimates, card sizes or
+  feed width change. Scroll-only work selects the visible window and checks
+  pagination, without rediscovering or measuring every mounted card.
+- Coalesce native render requests and avoid scheduling layout for unchanged
+  candidate windows. Batch card measurements and reuse them for estimates.
+- Stop owned Save-label mutations from repeatedly rescanning the same posts.
+- Temporarily pause visible-post digit/letter badges, including their observers,
+  scroll listeners and hit testing. Keep w/v/c, j/k, Space and native key guards.
+- Preserve .17's permissive layout, delayed media updates, bounded native windows,
+  load-more and route/disable restoration. Offline source/bundle scroll fixtures
+  include before/after counters, frame logs, ordered screenshots and traces;
+  live X and physical scrolling smoothness remain unverified.
+
 ## 0.5.17
 
 - Keep the control simply Masonry: On/Off; bounded, deduplicated diagnostics stay

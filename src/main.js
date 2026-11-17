@@ -36,7 +36,6 @@ import {
 // file — a userscript can only inject a <style> element.
 import uiCss from './main.css';
 import { initMasonryNavigation } from './masonry-navigation.js';
-import { initMasonryHints } from './masonry-hints.js';
 import { initMasonry } from './masonry.js';
 import { isShortcutControl, isNativeShortcutSequence } from './keyboard.js';
 
@@ -1602,13 +1601,13 @@ function setSaveButtonState(button, { saved, url }) {
     button.setAttribute('aria-label', 'Remove saved post');
     button.title = 'Remove from local saves (v)';
     const label = button.querySelector('.xps-save-label');
-    if (label) label.textContent = 'Saved';
+    if (label && label.textContent !== 'Saved') label.textContent = 'Saved';
   } else {
     button.classList.remove('xps-saved');
     button.setAttribute('aria-label', 'Save post locally');
     button.title = 'Save post locally (v)';
     const label = button.querySelector('.xps-save-label');
-    if (label) label.textContent = 'Save';
+    if (label && label.textContent !== 'Save') label.textContent = 'Save';
   }
   button.setAttribute('aria-keyshortcuts', 'v');
 }
@@ -1771,11 +1770,6 @@ function init() {
     permalink: (article) => getTweetPermalink(article, { ownOnly:true }) });
   ensurePanel(masonry);
   initMasonryNavigation();
-  initMasonryHints({
-    permalink: (article) => getTweetPermalink(article, { ownOnly: true }),
-    eligible: (node) => !isArticleReadView(node) && !isInsideEmbeddedTweet(node) && !isInsideInlineQuote(node),
-    openBackground: openBackgroundPost,
-  });
   document.addEventListener('keydown', onPageScrollShortcut, true);
   document.addEventListener('keydown', onPostNavigationShortcut, true);
   document.addEventListener('keydown', onPostShortcut, true);
@@ -1791,6 +1785,8 @@ function init() {
 
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
+      if (mutation.target instanceof Element &&
+          mutation.target.closest('.xps-save-btn, .xps-fact-btn')) continue;
       const targetArticle = getMutationArticle(mutation.target);
       if (targetArticle) scheduleScan(targetArticle);
 

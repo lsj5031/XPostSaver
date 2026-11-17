@@ -70,11 +70,7 @@ async function closed(page) {
     const r = e.getBoundingClientRect(); return [r.width,r.height];
   }), [44,44]);
 }
-async function settled(page, count = null) {
-  await page.waitForFunction((n) => {
-    const badges = document.querySelectorAll('.xps-masonry-key');
-    return n === null ? badges.length > 0 : badges.length === n;
-  }, count);
+async function settled(page) {
   // Allow layout and initial ResizeObserver delivery.
   await page.waitForTimeout(300);
 }
@@ -87,9 +83,6 @@ async function press(page, key, options = {}, selector = 'body') {
 }
 async function blur(page) {
   await page.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
-}
-async function badges(page) {
-  return page.locator('.xps-masonry-key').evaluateAll((nodes) => nodes.map((e) => ({ key:e.textContent, url:e.dataset.url })));
 }
 async function countCalls(page) { return page.evaluate(() => window.tabCalls.length); }
 
@@ -131,7 +124,7 @@ try {
         await page.locator('.timeline').evaluate((e) => e.classList.add('xopt-masonry-container'));
       }
       await closed(page);
-      await settled(page, 3);
+      await settled(page);
       await page.addStyleTag({ content:upstreamLayout });
       await closed(page);
       const after = await measure(page, `${prefix}-02-full-feed`, true);
@@ -253,7 +246,7 @@ try {
       await page.locator('.timeline').evaluate((e) => e.classList.add('xopt-masonry-container'));
       await closed(page);
 
-      // Digits: quote discrimination, exhaustion, real background-call options.
+      // Retained shortcuts use own permalinks even with a preceding quote.
       await page.evaluate(() => {
         const timeline = document.querySelector('.timeline');
         const first = timeline.querySelector('article');
@@ -268,156 +261,13 @@ try {
       });
       await settled(page);
       await blur(page);
-      const assigned = await badges(page);
-      assert.ok(await page.locator('.timeline article').evaluateAll((cards) =>
-        cards.filter((card) => {
-          const r = card.getBoundingClientRect(); return r.top < innerHeight - 36 && r.bottom > 36;
-        }).length > 10), 'visible cards exceed the ten-key pool');
-      const hintCount = assigned.length;
-      assert.ok(hintCount > 10 && hintCount <= 15);
-      assert.equal(assigned.map((entry) => entry.key).join(''), '1234567890deqyz'.slice(0, hintCount));
-      assert.deepEqual(assigned.map((entry) => entry.url),
-        Array.from({ length:hintCount }, (_, i) => `https://x.com/fixture/status/${i+1}`), 'fixture visual rows map to own posts in visual order, not the quote');
-      const state = await page.evaluate(() => ({ focus:document.activeElement.tagName, x:scrollX, y:scrollY }));
-      for (const [index, entry] of assigned.entries()) {
-        if (index === 0) await page.keyboard.press(entry.key);
-        else assert.equal(await press(page, entry.key), true);
-        assert.deepEqual((await page.evaluate(() => window.tabCalls)).at(-1), { url:entry.url, options:{ active:false, insert:true, setParent:true } });
-      }
-      assert.equal(await countCalls(page), hintCount);
-      assert.deepEqual(await badges(page), assigned, 'other assignments unaffected');
-      assert.deepEqual(await page.evaluate(() => ({ focus:document.activeElement.tagName, x:scrollX, y:scrollY })), state);
-      assert.equal(await page.locator('#xps-masonry-keys').evaluate((e) => getComputedStyle(e).pointerEvents), 'none');
-      await measure(page, `${prefix}-05-digit-badges`, true);
-      for (const options of [{ repeat:true }, { shiftKey:true }, { ctrlKey:true }, { altKey:true }, { metaKey:true }, { isComposing:true }, { keyCode:229 }]) {
-        assert.equal(await press(page,'1',options), false);
-      }
-      await page.evaluate(() => {
-        const guards = document.createElement('div'); guards.id = 'fixture-guards';
-        guards.style.cssText = 'position:fixed;bottom:0;right:100px';
-        guards.innerHTML = '<input><input type="range"><select><option>one</option></select><textarea></textarea><div contenteditable="true"><span>Editor</span></div><div data-testid="videoPlayer"><button>Media</button></div><video tabindex="0"></video><div role="slider" tabindex="0"></div>';
-        document.body.append(guards);
-      });
-      for (const selector of ['input','input[type=range]','select','textarea','[contenteditable] span','[data-testid=videoPlayer] button','video','[role=slider]']) {
-        assert.equal(await press(page,'1',{},`#fixture-guards ${selector}`), false);
-      }
-      await page.locator('#fixture-guards input').first().focus();
-      assert.equal(await press(page,'1'), false, 'active editor guarded even with body event target');
-      await blur(page);
-      for (const key of 'abcdefghijklmnopqrstuvwxyz./?'.split('').filter((key) => !'jkwvcdeqyz'.includes(key))) {
-        assert.equal(await press(page,key), false);
-      }
-      await press(page,'g');
-      assert.equal(await press(page,'1'), false, 'native g-prefix continuation passes through');
-      await press(page,'g'); await press(page,'h');
-      assert.equal(await countCalls(page), hintCount);
-      await page.locator('#fixture-guards').evaluate((e) => e.remove());
-      await page.locator('.timeline').evaluate((timeline) => {
-        timeline.insertAdjacentHTML('beforeend', '<aside id="fixture-recommendation" style="position:fixed;right:10px;top:300px;width:160px;height:100px;background:#333;z-index:10"><article><a href="/recommend/status/555"><time>Recommendation</time></a></article></aside><article id="fixture-hidden-card" style="display:none"><a href="/hidden/status/556"><time>Hidden post</time></a></article>');
-      });
-      await settled(page);
-      assert.equal((await badges(page)).some((entry) => /\/(?:555|556)$/.test(entry.url)), false);
-      await page.locator('#fixture-recommendation, #fixture-hidden-card').evaluateAll((nodes) => nodes.forEach((e) => e.remove()));
-      await settled(page);
-      // Help/lightbox/menu suppress hints globally, even when not focused.
-      for (const role of ['dialog','menu','alertdialog']) {
-        await page.evaluate((role) => {
-          const el = document.createElement('div'); el.id = 'fixture-cover'; el.setAttribute('role',role);
-          el.style.cssText = 'position:fixed;right:0;top:0;width:80px;height:80px;background:#333;z-index:20'; document.body.append(el);
-        }, role);
-        assert.equal(await press(page,'1'), false);
-        await page.waitForFunction(() => !document.querySelector('.xps-masonry-key'));
-        await page.locator('#fixture-cover').evaluate((e) => e.remove());
-        await settled(page);
-      }
-      // Recycled href/anchor/card, and geometry changes in the SAME task as keydown.
-      for (const mutation of ['url','anchor','identity','shift','raw-query']) {
-        const prior = await countCalls(page);
-        assert.equal(await page.evaluate((mutation) => {
-          const card = document.querySelector('.timeline article');
-          const own = card.querySelector('a[href*="/fixture/status/"]');
-          if (mutation === 'url') own.href = '/fixture/status/101';
-          if (mutation === 'raw-query') own.href += '?changed=1';
-          if (mutation === 'anchor') own.replaceWith(own.cloneNode(true));
-          if (mutation === 'identity') {
-            const replacement = card.cloneNode(true);
-            replacement.querySelectorAll('.xps-save-btn, .xps-fact-btn').forEach((button) => button.remove());
-            card.replaceWith(replacement);
-          }
-          if (mutation === 'shift') card.style.transform = 'translateY(12px)';
-          const event = new KeyboardEvent('keydown', { key:'1', bubbles:true, cancelable:true });
-          document.body.dispatchEvent(event); return event.defaultPrevented;
-        }, mutation), !['url', 'identity'].includes(mutation));
-        assert.equal(await countCalls(page), prior + (['url', 'identity'].includes(mutation) ? 0 : 1));
-        await settled(page);
-      }
-      await blur(page);
-      const current = (await badges(page))[0];
-      assert.equal(await press(page,current.key), true);
-      assert.equal((await page.evaluate(() => window.tabCalls)).at(-1).url, current.url);
-      // Occlusion: a fully covered card gets no assignment; exposed cards keep keys.
-      await page.evaluate(() => {
-        const rect = document.querySelector('.timeline article').getBoundingClientRect();
-        const cover = document.createElement('div'); cover.id = 'fixture-occlusion';
-        cover.style.cssText = `position:fixed;z-index:20;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;background:#444`; document.body.append(cover);
-      });
-      await settled(page);
-      assert.equal((await badges(page)).some((entry) => entry.url.endsWith('/101')), false);
-      await page.locator('#fixture-occlusion').evaluate((e) => e.remove());
-      await settled(page);
-      const priorScroll = await countCalls(page);
-      assert.equal(await page.evaluate(() => {
-        scrollTo(0,350);
-        const event = new KeyboardEvent('keydown', { key:'1', bubbles:true, cancelable:true });
-        document.body.dispatchEvent(event); return event.defaultPrevented;
-      }), false);
-      assert.equal(await countCalls(page), priorScroll);
-      await settled(page);
-      await measure(page, `${prefix}-06-scrolled-badges`, true);
-      const scrolled = (await badges(page))[0];
-      assert.equal(scrolled.url, 'https://x.com/fixture/status/4', 'partly exposed second visual row is first after the fixture scroll');
-      await blur(page);
-      assert.equal(await press(page,scrolled.key), true);
-      assert.equal((await page.evaluate(() => window.tabCalls)).at(-1).url, scrolled.url);
-      // Source card removal and CSS/image-sized layout settle must recover.
-      await page.locator('.timeline article').last().evaluate((e) => e.remove());
-      await settled(page);
-      await page.locator('.timeline article').first().evaluate((e) => { e.style.minHeight = '260px'; });
-      await settled(page);
-      const beforeImage = await countCalls(page);
-      const imageChange = await page.evaluate(() => {
-        const image = document.createElement('img');
-        image.width = 40; image.height = 320; image.alt = 'Offline image layout fixture';
-        image.style.cssText = 'display:block;width:40px;height:320px';
-        const visible = [...document.querySelectorAll('.timeline article')].find((card) => {
-          const r = card.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight;
-        });
-        visible.append(image);
-        const r = visible.getBoundingClientRect();
-        const url = visible.querySelector('a[href*="/fixture/status/"]').href;
-        const badge = [...document.querySelectorAll('.xps-masonry-key')].find((n) => n.dataset.url === url);
-        const event = new KeyboardEvent('keydown',{key:badge.textContent,bubbles:true,cancelable:true});
-        document.body.dispatchEvent(event);
-        image.dispatchEvent(new Event('load'));
-        return { prevented:event.defaultPrevented, height:r.height, imageHeight:image.getBoundingClientRect().height };
-      });
-      assert.ok(imageChange.imageHeight >= 320 && imageChange.height > 320, 'image changes card geometry');
-      assert.equal(imageChange.prevented, true);
-      assert.equal(await countCalls(page), beforeImage + 1);
-      await settled(page);
-      // Busy unrelated counters must not recreate settled hint nodes.
-      await page.locator('.xps-masonry-key').first().evaluate((e) => { window.stableBadge = e; });
-      await page.evaluate(() => {
-        const counter = document.createElement('div'); counter.id = 'busy-counter';
-        counter.style.cssText = 'position:fixed;right:0;bottom:0'; document.body.append(counter);
-        window.counterTimer = setInterval(() => { counter.textContent = String(Math.random()); }, 20);
-      });
-      await page.waitForTimeout(450);
-      assert.equal(await page.evaluate(() => window.stableBadge.isConnected), true);
-      await page.evaluate(() => { clearInterval(window.counterTimer); document.querySelector('#busy-counter').remove(); });
-      // Missing/rejected/throwing API: shared error feedback, no native interception.
+      assert.equal(await page.locator('.xps-masonry-key, #xps-masonry-keys').count(), 0, 'visible-post badges paused in .18');
+      for (const key of '1234567890deqyz') assert.equal(await press(page, key), false);
+      assert.equal(await countCalls(page), 0);
+      // Missing/rejected/throwing API: shared error feedback, no active-tab fallback.
       for (const failure of ['missing','throw','null','false','reject']) {
         await page.evaluate((failure) => {
+          document.querySelector('#xps-toast')?.remove();
           window.savedOpener = window.GM_openInTab;
           if (failure === 'missing') delete window.GM_openInTab;
           else window.GM_openInTab = () => {
@@ -428,11 +278,12 @@ try {
         }, failure);
         await settled(page);
         await blur(page);
-        assert.equal(await press(page,'1'), false);
+        await page.keyboard.press('j');
+        assert.equal(await press(page,'w',{},'article:focus'), failure !== 'missing');
         await page.waitForFunction(() => document.querySelector('#xps-toast')?.textContent.includes('permission'));
         await page.evaluate(() => { window.GM_openInTab = window.savedOpener; });
       }
-      // Existing focused-post shortcuts still work with active masonry hints.
+      // Existing focused-post shortcuts still work without masonry hints.
       await page.evaluate(() => scrollTo(0,0));
       await settled(page);
       await blur(page);
@@ -455,16 +306,13 @@ try {
       await page.waitForFunction(() => JSON.parse(window.fixtureStorage.xSavedPosts).length === 0);
       await page.keyboard.press('c');
       await page.waitForFunction((url) => document.querySelector('dialog textarea')?.value.includes(url), focusedUrl);
-      assert.equal(await press(page,'1'), false, 'local fact-check dialog guards digits');
+      assert.equal(await press(page,'w'), false, 'local fact-check dialog guards retained shortcuts');
       await page.locator('dialog').evaluate((e) => e.dispatchEvent(new Event('cancel',{cancelable:true})));
       await page.keyboard.press('Space');
       await page.waitForFunction(() => scrollY > 0);
       const paged = await page.evaluate(() => scrollY);
       await page.keyboard.press('Shift+Space');
       await page.waitForFunction((y) => scrollY < y, paged);
-      // Actual SPA URL, without a DOM mutation, invalidates old keys immediately.
-      // about:blank fixture cannot use pushState to X, so use a same-origin route
-      // in a separately fulfilled local page below.
       calls.push({ name:prefix, calls:await page.evaluate(() => window.tabCalls) });
       assert.deepEqual(await page.evaluate(() => window.fixtureStorage), { xSavedPosts:'[]', xpsFactCheckTemplate:'Keep my settings' });
       await page.close();
@@ -473,34 +321,22 @@ try {
     await routePage.route('https://x.com/**', (route) => route.fulfill({ contentType:'text/html', body:html }));
     await routePage.goto('https://x.com/home');
     await routePage.setViewportSize({ width:1280,height:800 });
+    await routePage.evaluate(() => document.querySelector('.timeline').classList.add('xopt-masonry-container'));
+    await routePage.addScriptTag({ content:code });
+    await closed(routePage);
     await routePage.evaluate(() => {
-      window.routeCalls = [];
-      window.GM_openInTab = (url, options) => { window.routeCalls.push({url,options}); return {}; };
+      document.querySelector('.timeline').classList.remove('xopt-masonry-container');
+      history.pushState({},'', '/fixture/status/1');
+    });
+    await routePage.waitForFunction(() => !document.querySelector('.xps-nav-toggle'));
+    await routePage.evaluate(() => {
+      history.pushState({},'','/home');
       document.querySelector('.timeline').classList.add('xopt-masonry-container');
     });
-    await routePage.addScriptTag({ content:code });
-    await settled(routePage,3);
-    assert.equal(await routePage.evaluate(() => {
-      history.pushState({},'', '/fixture/status/1');
-      const event = new KeyboardEvent('keydown', { key:'1',bubbles:true,cancelable:true });
-      document.body.dispatchEvent(event); return event.defaultPrevented;
-    }), false);
-    await routePage.waitForFunction(() => !document.querySelector('.xps-masonry-key'));
-    assert.deepEqual(await routePage.evaluate(() => window.routeCalls), []);
-    await routePage.evaluate(() => history.pushState({},'','/home'));
-    await settled(routePage,3);
-    await routePage.evaluate(() => {
-      history.pushState({},'','/explore');
-      const event = new KeyboardEvent('keydown',{key:'1',bubbles:true,cancelable:true}); document.body.dispatchEvent(event);
-    });
-    assert.deepEqual(await routePage.evaluate(() => window.routeCalls), []);
-    await settled(routePage,3);
-    await blur(routePage);
-    assert.equal(await press(routePage,'1'), true);
-    assert.equal((await routePage.evaluate(() => window.routeCalls)).length, 1);
+    await closed(routePage);
     await routePage.close();
   }
   assert.deepEqual(errors, []);
   await writeFile(`${output}/masonry-measurements.json`, JSON.stringify({ measurements, calls }, null, 2));
-  console.log(`Passed source/bundle, both load orders, full-width 1000/1280/1440/1920/2560, inert drawer, digit badges, stale-key safety and background API guards. Evidence: ${output}`);
+  console.log(`Passed source/bundle, both load orders, full-width 1000/1280/1440/1920/2560, inert drawer, retained shortcuts, paused badges and background API guards. Evidence: ${output}`);
 } finally { await browser.close(); }

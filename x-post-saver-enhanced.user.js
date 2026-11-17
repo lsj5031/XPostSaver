@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.17
+// @version      0.5.18
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1035,195 +1035,6 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   }
   __name(initMasonryNavigation, "initMasonryNavigation");
 
-  // src/keyboard.js
-  var SHORTCUT_CONTROLS = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, [data-testid="videoPlayer"], [data-testid="audioPlayer"], dialog, [role="dialog"], [role="alertdialog"]';
-  function isShortcutControl(event) {
-    return [event.target, document.activeElement, ...event.composedPath?.() || []].some((node) => node instanceof Element && node.closest(SHORTCUT_CONTROLS));
-  }
-  __name(isShortcutControl, "isShortcutControl");
-  var prefixUntil = 0;
-  var prefixEvents = /* @__PURE__ */ new WeakMap();
-  function isNativeShortcutSequence(event) {
-    if (prefixEvents.has(event)) return prefixEvents.get(event);
-    let native = false;
-    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !isShortcutControl(event)) {
-      if (["g", "a"].includes(event.key)) {
-        prefixUntil = Date.now() + 1500;
-        native = true;
-      } else if (Date.now() < prefixUntil && event.key.length === 1) {
-        if (!event.repeat) prefixUntil = 0;
-        native = true;
-      }
-    }
-    prefixEvents.set(event, native);
-    return native;
-  }
-  __name(isNativeShortcutSequence, "isNativeShortcutSequence");
-
-  // src/masonry-hints.js
-  function initMasonryHints({ permalink, eligible, openBackground }) {
-    if (typeof document.elementFromPoint !== "function") return;
-    const keys = "1234567890deqyz";
-    const layer = document.createElement("div");
-    layer.id = "xps-masonry-keys";
-    layer.setAttribute("aria-hidden", "true");
-    layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:3";
-    const assignments = /* @__PURE__ */ new Map();
-    let route = location.href;
-    let frame = 0;
-    const observed = /* @__PURE__ */ new Set();
-    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
-    function feed() {
-      if (document.hidden || /\/status\/\d+(?:\/|$)/.test(location.pathname) || document.documentElement.classList.contains("xopt-status-detail") || document.querySelector(".xps-nav-open")) return null;
-      const layers = document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"], [data-testid="Dropdown"], [popover]:popover-open');
-      if ([...layers].some((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")) return null;
-      return document.querySelector('[data-testid="primaryColumn"] :is(.xps-masonry-container, .xopt-masonry-container)');
-    }
-    __name(feed, "feed");
-    function cards() {
-      const source = feed();
-      if (!source) return [];
-      const primary = source.closest('[data-testid="primaryColumn"]');
-      if (!primary) return [];
-      const bounds = primary.getBoundingClientRect();
-      const result = [];
-      for (const card of source.querySelectorAll("article")) {
-        if (card.parentElement?.closest('article, [data-testid="tweet"]') || !eligible(card) || card.closest('aside, [data-testid="UserCell"]')) continue;
-        const rect = card.getBoundingClientRect();
-        const left = Math.max(0, rect.left, bounds.left), right = Math.min(innerWidth, rect.right, bounds.right);
-        const top = Math.max(0, rect.top), bottom = Math.min(innerHeight, rect.bottom);
-        if (right - left < 36 || bottom - top < 36) continue;
-        const url = permalink(card);
-        if (!url) continue;
-        let hidden = false;
-        for (let node = (
-          /** @type {Element | null} */
-          card
-        ); node; node = node.parentElement) {
-          const style = getComputedStyle(node);
-          if (node.hasAttribute("inert") || node.getAttribute("aria-hidden") === "true" || style.display === "none" || style.visibility !== "visible" || Number(style.opacity) < 0.1) {
-            hidden = true;
-            break;
-          }
-        }
-        if (hidden) continue;
-        let patch = (
-          /** @type {number[] | null} */
-          null
-        );
-        for (const y of [top + 4, (top + bottom - 28) / 2, bottom - 32]) {
-          for (const x of [left + 4, (left + right - 28) / 2, right - 32]) {
-            if ([[1, 1], [27, 1], [1, 27], [27, 27], [14, 14]].every(([dx, dy]) => {
-              const hit = document.elementFromPoint(x + dx, y + dy);
-              return hit && card.contains(hit) && hit.closest("article") === card && eligible(hit);
-            })) {
-              patch = [x, y];
-              break;
-            }
-          }
-          if (patch) break;
-        }
-        if (!patch) continue;
-        result.push({ card, source, url, rect: [rect.left, rect.top, rect.right, rect.bottom], patch });
-      }
-      return result.sort((a, b) => a.rect[1] - b.rect[1] || a.rect[0] - b.rect[0]);
-    }
-    __name(cards, "cards");
-    function remove(card) {
-      assignments.get(card)?.badge.remove();
-      assignments.delete(card);
-    }
-    __name(remove, "remove");
-    function observe(entries) {
-      const source = feed();
-      const wanted = new Set(source ? [source, source.closest('[data-testid="primaryColumn"]'), ...entries.map((entry) => entry.card)] : []);
-      for (const node of observed) if (!wanted.has(node)) {
-        resize?.unobserve(node);
-        observed.delete(node);
-      }
-      for (const node of wanted) if (node && !observed.has(node)) {
-        observed.add(node);
-        resize?.observe(node);
-      }
-    }
-    __name(observe, "observe");
-    function reconcile() {
-      frame = 0;
-      if (route !== location.href) {
-        for (const card of assignments.keys()) remove(card);
-      }
-      route = location.href;
-      const current = cards();
-      const byCard = new Map(current.map((entry) => [entry.card, entry]));
-      for (const [card, entry] of assignments) {
-        const next = byCard.get(card);
-        if (!next || next.url !== entry.url || next.source !== entry.source) remove(card);
-      }
-      const available = [...keys].filter((key) => ![...assignments.values()].some((entry) => entry.key === key));
-      for (const entry of current) {
-        let assigned = assignments.get(entry.card);
-        if (!assigned) {
-          const key = available.shift();
-          if (!key) continue;
-          const badge = document.createElement("span");
-          badge.className = "xps-masonry-key";
-          badge.textContent = key;
-          badge.dataset.url = entry.url;
-          badge.style.cssText = "position:absolute;width:28px;height:28px;box-sizing:border-box;text-align:center;border:1px solid white;border-radius:5px;background:#202020;color:white;font:bold 16px/26px monospace;pointer-events:none;box-shadow:0 1px 4px #0008";
-          assigned = { ...entry, key, badge };
-          assignments.set(entry.card, assigned);
-          if (!layer.isConnected) document.body.append(layer);
-          layer.append(badge);
-        }
-        const [x, y] = entry.patch;
-        if (assigned.badge.style.left !== `${x}px`) assigned.badge.style.left = `${x}px`;
-        if (assigned.badge.style.top !== `${y}px`) assigned.badge.style.top = `${y}px`;
-      }
-      observe(current);
-    }
-    __name(reconcile, "reconcile");
-    function schedule() {
-      if (assignments.size && (route !== location.href || !feed())) {
-        for (const card of assignments.keys()) remove(card);
-      }
-      if (!frame) frame = requestAnimationFrame(reconcile);
-    }
-    __name(schedule, "schedule");
-    new MutationObserver((records) => {
-      if (records.every((record) => layer.contains(record.target) || record.type === "childList" && [...record.addedNodes, ...record.removedNodes].every((node) => node === layer))) return;
-      schedule();
-    }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style", "href", "hidden", "inert", "aria-hidden", "aria-modal", "role"] });
-    window.addEventListener("scroll", schedule, true);
-    window.addEventListener("resize", schedule);
-    window.addEventListener("popstate", schedule);
-    window.addEventListener("hashchange", schedule);
-    window.navigation?.addEventListener("currententrychange", schedule);
-    document.addEventListener("visibilitychange", schedule);
-    document.addEventListener("xps-navigation-change", schedule);
-    document.addEventListener("xps-masonry-change", schedule);
-    document.fonts?.addEventListener("loadingdone", schedule);
-    document.addEventListener("load", (event) => {
-      if (event.target instanceof Element && feed()?.contains(event.target)) schedule();
-    }, true);
-    document.addEventListener("keydown", (event) => {
-      if (isNativeShortcutSequence(event)) return;
-      if (!keys.includes(event.key) || event.key.length !== 1 || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || isShortcutControl(event) || [event.target, document.activeElement].some((node) => node instanceof Element && node.closest('nav, header[role="banner"], [role="menu"], .xps-nav-toggle'))) return;
-      const entry = [...assignments.values()].find((assigned) => assigned.key === event.key);
-      const valid = route === location.href && entry && cards().some((current) => current.card === entry.card && current.source === entry.source && current.url === entry.url);
-      if (!valid) {
-        if (entry) remove(entry.card);
-        schedule();
-        return;
-      }
-      if (openBackground(entry.url)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      }
-    }, true);
-    schedule();
-  }
-  __name(initMasonryHints, "initMasonryHints");
-
   // src/masonry.css
   var masonry_default = '.xps-masonry-container {\n  display: block !important;\n  position: relative !important;\n  height: var(--xps-feed-height, auto) !important;\n  min-height: 0 !important;\n  padding: 0 !important;\n  overflow-anchor: none;\n}\n.xps-masonry-container > .xps-masonry-item {\n  position: absolute !important;\n  top: 0 !important;\n  left: 0 !important;\n  right: auto !important;\n  bottom: auto !important;\n  transform: translate(var(--xps-card-x, 0px), var(--xps-card-y, 0px)) !important;\n  width: var(--xps-card-width) !important;\n  max-width: var(--xps-card-width) !important;\n  height: auto !important;\n  min-height: 0 !important;\n  max-height: none !important;\n  margin: 0 !important;\n  box-sizing: border-box !important;\n  min-width: 0 !important;\n}\n.xps-masonry-item img, .xps-masonry-item video { max-width: 100%; }\n.xps-masonry-item :is(article[role="article"], [data-testid="tweet"]) {\n  max-width: 100% !important;\n  box-sizing: border-box;\n}\n.xps-masonry-item > article, .xps-masonry-item > [data-testid="tweet"] {\n  width: 100% !important;\n  max-width: none !important;\n  box-sizing: border-box;\n}\n';
 
@@ -1386,6 +1197,9 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     let lastFetch = 0;
     let fetchTimer = 0;
     let viewportDirty = true;
+    let layoutDirty = true;
+    let containerWidth = 0;
+    let refreshFrame = 0;
     const observed = /* @__PURE__ */ new Set();
     let placement = createMasonryLayout();
     let visualPlacement = createMasonryLayout();
@@ -1428,13 +1242,18 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     }
     __name(waitForBridge, "waitForBridge");
     function wake() {
+      layoutDirty = true;
       if (!retryTimer) retryCount = 0;
       schedule();
     }
     __name(wake, "wake");
-    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.target !== active) || active?.clientWidth !== containerWidth) wake();
+    }) : null;
     const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
     function release() {
+      if (refreshFrame) cancelAnimationFrame(refreshFrame);
+      refreshFrame = 0;
       window.clearTimeout(fetchTimer);
       fetchTimer = 0;
       resize?.disconnect();
@@ -1455,6 +1274,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         for (const child of active.children) clearChild(child);
       }
       active = null;
+      layoutDirty = true;
       placement = createMasonryLayout();
       visualPlacement = createMasonryLayout();
       activeRoute = "";
@@ -1487,6 +1307,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     }
     __name(discover, "discover");
     function refresh(scroller) {
+      if (refreshFrame) return;
+      refreshFrame = requestAnimationFrame(() => {
+        refreshFrame = 0;
+        if (bridge?.scroller === scroller) refreshNow(scroller);
+      });
+    }
+    __name(refresh, "refresh");
+    function refreshNow(scroller) {
       try {
         if (typeof scroller._measureRelativeViewportRect === "function" && typeof scroller._getAnchor === "function" && typeof scroller._updateRenderedItems === "function") {
           const rect = scroller._measureRelativeViewportRect();
@@ -1502,7 +1330,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         schedule();
       }
     }
-    __name(refresh, "refresh");
+    __name(refreshNow, "refreshNow");
     function connect(container) {
       const native = page.document.querySelector("[data-xps-scroller]");
       bridgeReason = "waiting for page-world list";
@@ -1525,10 +1353,18 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         scroller,
         fetch,
         originals: /* @__PURE__ */ new Map(),
-        items: [],
-        rendered: [],
+        items: (
+          /** @type {WindowItem[]} */
+          []
+        ),
+        rendered: (
+          /** @type {WindowItem[]} */
+          []
+        ),
         geometry: { positions: [], heights: [] },
-        start: 0
+        start: 0,
+        width: 0,
+        geometryDirty: true
       };
       const replace = /* @__PURE__ */ __name((name, installed) => {
         state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
@@ -1546,23 +1382,33 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         const parsedEntries = result.allItemsWithPositions.map(masonryEntry);
         const counts = /* @__PURE__ */ new Map();
         for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
-        const items = result.allItemsWithPositions.map((entry, index) => {
+        const next = result.allItemsWithPositions.map((entry, index) => {
           const parsed = parsedEntries[index];
           if (parsed && counts.get(parsed.key) === 1) return {
             ...parsed,
             height: state.estimatedHeight ?? parsed.height
           };
           return {
-            key: /* @__PURE__ */ Symbol(`native slot ${index}`),
+            key: typeof state.items[index]?.key === "symbol" ? state.items[index].key : /* @__PURE__ */ Symbol(`native slot ${index}`),
             entry,
             height: state.estimatedHeight ?? (Number.isFinite(entry?.height) && entry.height > 0 ? entry.height : 320)
           };
         });
-        state.items = items;
+        const changed = next.length !== state.items.length || next.some((item, i) => item.key !== state.items[i].key || item.height !== state.items[i].height);
+        if (changed) {
+          state.items = next;
+          state.geometryDirty = true;
+        }
+        const items = state.items;
         const width = container.clientWidth;
         if (!Number.isFinite(width) || width <= 0) return result;
-        const layout = placement.update(items, width);
-        state.geometry = layout;
+        const dirty = state.geometryDirty || state.width !== width;
+        if (dirty) {
+          state.geometry = placement.update(items, width);
+          state.width = width;
+          state.geometryDirty = false;
+        }
+        const layout = state.geometry;
         const y = Math.max(0, -container.getBoundingClientRect().top);
         const slice = masonryWindow(layout, y, innerHeight);
         if (!slice) {
@@ -1570,9 +1416,10 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           return result;
         }
         const positioned = result.allItemsWithPositions;
+        const windowChanged = slice.start !== state.start || slice.end - slice.start !== state.rendered.length;
         state.rendered = items.slice(slice.start, slice.end);
         state.start = slice.start;
-        schedule();
+        if (dirty || windowChanged) wake();
         return {
           ...result,
           allItemsWithPositions: positioned,
@@ -1618,7 +1465,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         setStatus("active: external engine");
         return;
       }
-      const container = discover();
+      const container = !layoutDirty && active?.isConnected ? active : discover();
       if (active && active !== container) release();
       if (!container || rejected.has(container)) {
         if (active) release();
@@ -1649,11 +1496,13 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         retryContainer = null;
         retryCount = 0;
         active = container;
+        resize.observe(container);
         activeRoute = lastRoute;
         viewportDirty = true;
+        layoutDirty = true;
       }
       if (bridge && viewportDirty) {
-        const layout2 = placement.update(bridge.items, container.clientWidth);
+        const layout2 = bridge.geometry;
         const slice = masonryWindow(layout2, Math.max(0, -container.getBoundingClientRect().top), innerHeight);
         const wanted2 = slice && bridge.items.slice(slice.start, slice.end);
         if (!bridge.items.length || !wanted2 || wanted2.length !== bridge.rendered.length || wanted2.some((item, i) => item !== bridge.rendered[i])) refresh(bridge.scroller);
@@ -1664,8 +1513,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         }
       }
       viewportDirty = false;
+      if (!layoutDirty) {
+        checkNearEnd(container);
+        return;
+      }
+      layoutDirty = false;
       const children = [...container.children];
       const width = container.clientWidth;
+      containerWidth = width;
       if (!Number.isFinite(width) || width <= 0) return;
       const columns = Math.max(1, Math.floor((width + 12) / 332));
       const cardWidth = (width - (columns - 1) * 12) / columns;
@@ -1718,16 +1573,21 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         observed.add(child);
         resize.observe(child);
       }
+      const measured = /* @__PURE__ */ new Map();
       cells.forEach(({ child, item, fullRow }) => {
         if (!item) return;
         const height = Math.ceil(child.getBoundingClientRect().height);
+        measured.set(child, height);
         if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow);
       });
       const layout = renderer.update(items, width);
-      const cardHeights = local && bridge ? cells.filter((cell) => !cell.fullRow).map(({ child }) => Math.ceil(child.getBoundingClientRect().height)).filter((height) => height > 0 && Number.isFinite(height)) : [];
+      const cardHeights = local && bridge ? cells.filter((cell) => !cell.fullRow).map(({ child }) => measured.get(child)).filter((height) => height > 0 && Number.isFinite(height)) : [];
       const estimate = cardHeights.length ? Math.ceil(cardHeights.reduce((sum, height) => sum + height, 0) / cardHeights.length) : null;
       const estimateChanged = estimate !== null && bridge.estimatedHeight !== estimate;
-      if (estimateChanged) bridge.estimatedHeight = estimate;
+      if (estimateChanged) {
+        bridge.estimatedHeight = estimate;
+        bridge.geometryDirty = true;
+      }
       const geometryChanged = bridge && !local && (layout.positions.length !== bridge.geometry.positions.length || layout.positions.some((p, i) => p.top !== bridge.geometry.positions[i].top || layout.heights[i] !== bridge.geometry.heights[i]));
       const offset = local && bridge ? Math.min(...bridge.geometry.positions.slice(
         bridge.start,
@@ -1747,7 +1607,12 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       )}px`);
       setStatus("active");
       if (layoutChanged) document.dispatchEvent(new Event("xps-masonry-change"));
+      if (bridge && !local) bridge.geometry = layout;
       if (geometryChanged || estimateChanged) refresh(bridge.scroller);
+      checkNearEnd(container);
+    }
+    __name(apply, "apply");
+    function checkNearEnd(container) {
       const remaining = container.getBoundingClientRect().bottom - innerHeight;
       if (bridge?.fetch && remaining < 1800) {
         const wait = 1200 - (Date.now() - lastFetch);
@@ -1765,13 +1630,13 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         }
       }
     }
-    __name(apply, "apply");
+    __name(checkNearEnd, "checkNearEnd");
     function schedule() {
       if (!timer) timer = window.setTimeout(apply, 60);
     }
     __name(schedule, "schedule");
     new MutationObserver((records) => {
-      if (records.some((r) => r.type === "attributes" && r.target instanceof Element && r.target.closest('[data-testid="primaryColumn"]') || [...r.addedNodes, ...r.removedNodes].some((n) => n instanceof Element && !n.closest("#xps-masonry-keys, #xps-panel") && !n.matches(".xps-nav-toggle, #xps-masonry-keys")))) wake();
+      if (records.some((r) => r.type === "attributes" && r.target instanceof Element && r.target.closest('[data-testid="primaryColumn"]') || [...r.addedNodes, ...r.removedNodes].some((n) => n instanceof Element && !n.closest("#xps-masonry-keys, #xps-panel, .xps-save-btn, .xps-fact-btn") && !n.matches(".xps-nav-toggle, #xps-masonry-keys")))) wake();
     }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["href"] });
     window.addEventListener("resize", () => {
       viewportDirty = true;
@@ -1779,7 +1644,8 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     });
     window.addEventListener("scroll", () => {
       viewportDirty = true;
-      wake();
+      if (!active) wake();
+      else schedule();
     }, { passive: true });
     window.addEventListener("popstate", wake);
     window.setInterval(() => {
@@ -1803,6 +1669,31 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     };
   }
   __name(initMasonry, "initMasonry");
+
+  // src/keyboard.js
+  var SHORTCUT_CONTROLS = 'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], video, audio, [data-testid="videoPlayer"], [data-testid="audioPlayer"], dialog, [role="dialog"], [role="alertdialog"]';
+  function isShortcutControl(event) {
+    return [event.target, document.activeElement, ...event.composedPath?.() || []].some((node) => node instanceof Element && node.closest(SHORTCUT_CONTROLS));
+  }
+  __name(isShortcutControl, "isShortcutControl");
+  var prefixUntil = 0;
+  var prefixEvents = /* @__PURE__ */ new WeakMap();
+  function isNativeShortcutSequence(event) {
+    if (prefixEvents.has(event)) return prefixEvents.get(event);
+    let native = false;
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !isShortcutControl(event)) {
+      if (["g", "a"].includes(event.key)) {
+        prefixUntil = Date.now() + 1500;
+        native = true;
+      } else if (Date.now() < prefixUntil && event.key.length === 1) {
+        if (!event.repeat) prefixUntil = 0;
+        native = true;
+      }
+    }
+    prefixEvents.set(event, native);
+    return native;
+  }
+  __name(isNativeShortcutSequence, "isNativeShortcutSequence");
 
   // src/main.js
   var STORAGE_KEY = "xSavedPosts";
@@ -3122,13 +3013,13 @@ ${longform}`;
       button.setAttribute("aria-label", "Remove saved post");
       button.title = "Remove from local saves (v)";
       const label = button.querySelector(".xps-save-label");
-      if (label) label.textContent = "Saved";
+      if (label && label.textContent !== "Saved") label.textContent = "Saved";
     } else {
       button.classList.remove("xps-saved");
       button.setAttribute("aria-label", "Save post locally");
       button.title = "Save post locally (v)";
       const label = button.querySelector(".xps-save-label");
-      if (label) label.textContent = "Save";
+      if (label && label.textContent !== "Save") label.textContent = "Save";
     }
     button.setAttribute("aria-keyshortcuts", "v");
   }
@@ -3274,11 +3165,6 @@ ${longform}`;
     });
     ensurePanel(masonry);
     initMasonryNavigation();
-    initMasonryHints({
-      permalink: /* @__PURE__ */ __name((article) => getTweetPermalink(article, { ownOnly: true }), "permalink"),
-      eligible: /* @__PURE__ */ __name((node) => !isArticleReadView(node) && !isInsideEmbeddedTweet(node) && !isInsideInlineQuote(node), "eligible"),
-      openBackground: openBackgroundPost
-    });
     document.addEventListener("keydown", onPageScrollShortcut, true);
     document.addEventListener("keydown", onPostNavigationShortcut, true);
     document.addEventListener("keydown", onPostShortcut, true);
@@ -3291,6 +3177,7 @@ ${longform}`;
     });
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
+        if (mutation.target instanceof Element && mutation.target.closest(".xps-save-btn, .xps-fact-btn")) continue;
         const targetArticle = getMutationArticle(mutation.target);
         if (targetArticle) scheduleScan(targetArticle);
         mutation.addedNodes.forEach((node) => {

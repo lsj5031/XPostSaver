@@ -148,13 +148,10 @@ try {
       for(const [id,url] of [[101,'https://x.com/outer/status/101'],[102,'https://x.com/outer/status/102'],[103,'https://x.com/outer/status/103'],[104,'https://x.com/outer/status/104'],[106,'https://x.com/outer/status/106'],[108,'https://x.com/outer/status/108'],[908,'https://x.com/outer/status/908']]) {
         await page.locator(`#post-${id}`).scrollIntoViewIfNeeded();
         await settle(page);
-        const current=await render(page);
-        const target=current.targets.find((entry)=>entry.article===`post-${id}`);
-        assert.ok(target,`expected an exposed badge for native post ${id}`);
-        assert.equal(target.url,url,`badge for post ${id} must target its own URL, never a quote`);
-        await page.evaluate(()=>document.activeElement instanceof HTMLElement&&document.activeElement.blur());
+        assert.deepEqual((await render(page)).targets,[],'visible-post badges are paused');
+        await page.locator(`#post-${id}`).evaluate((node)=>{node.tabIndex=0;node.focus({preventScroll:true});});
         const state=await page.evaluate(()=>({x:scrollX,y:scrollY,focus:document.activeElement.tagName,count:window.calls.length}));
-        await page.keyboard.press(target.key);
+        await page.keyboard.press('w');
         assert.deepEqual(await page.evaluate(()=>({x:scrollX,y:scrollY,focus:document.activeElement.tagName})),{x:state.x,y:state.y,focus:state.focus});
         assert.equal(await page.evaluate(()=>window.calls.length),state.count+1);
         assert.deepEqual(await page.evaluate(()=>window.calls.at(-1)),{url,options:{active:false,insert:true,setParent:true}});

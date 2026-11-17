@@ -102,7 +102,8 @@ coordinate objects pass through unchanged. Missing own permalinks, unknown or
 conflicting candidate IDs, reordered placeholders and delayed commits do not
 block visual layout. Unverified windows use estimated native geometry and pack
 the actual DOM cards locally, without caching measurements by guessed identity.
-Cards without their own permalink simply have no shortcut badge or guessed URL.
+Own permalinks are not required for layout. Visible-post shortcut badges are
+temporarily disabled in .18 to prioritize scrolling; no URL is guessed.
 Newly placed posts choose the shortest column, with approximately 320px minimum
 widths. Once placed, a post keeps its column for the current feed and column
 count when their identities are known. Unverified cards/windows may lose that
@@ -151,53 +152,21 @@ bookmark panel are unaffected. Verified with offline native-shaped DOM/layout
 fixtures, **not a live logged-in X account**; future X/upstream DOM changes may
 require compatibility updates.
 
-### Masonry single-key background opening (v0.5.14)
+### Visible-post badges temporarily paused (v0.5.18)
 
-While a real primary masonry timeline is active, up to fifteen visible, exposed
-posts receive digit-first badges **1 2 3 4 5 6 7 8 9 0 d e q y z**. Initial
-assignment follows top-to-bottom, then left-to-right order. Visible surviving
-posts keep their keys and badge nodes as counters, media and layout change;
-newly exposed posts take free keys, without reshuffling existing labels. Extra
-cards stay unlabelled when the pool is exhausted. Press the displayed key once
-to open that post's own permalink in a **new background tab**, without moving
-feed focus or scroll. No activation mode, sequence or Enter is needed.
-
-Positions reconcile in animation frames, without clearing the whole layer or
-waiting for a debounce. Scroll/reflow moves badges with their cards; removed,
-recycled, covered and route-invalid mappings are discarded before the next
-paint. Keypress independently checks the selected card's current own URL and
-exposure, even before a pending reconciliation. Quotes, recommendations,
-status detail pages, open drawers and visible dialogs/menus get no active hints.
-
-The added lowercase pool is **d/e/q/y/z**, not every unused alphabet position.
-The offline source/reference audit reserves **a/g** (native audio/navigation
-prefixes), **b/x** (both reported Block bindings), **n/l/r/t/m/u/o** (native
-post actions), **f** (media), **j/k** (navigation), **w/v/c** (existing XPostSaver
-actions), and **h/i/p/s** (navigation destinations, conservatively reserved).
-`d` is an audio-dock destination only after `a`; both **g** and **a**, and their
-next character within 1.5 seconds, pass through without opening a badge.
-Typing, select/range, focused media, menus, modifiers, IME and held repeats
-remain guarded. Space, punctuation, native Enter and existing shortcuts are
-unchanged. No added single-letter action for d/e/q/y/z was identified in the
-available references, but those cached third-party lists are not authoritative
-and live X bindings can vary. **Current authenticated X shortcut UI/source was
-not accessible offline**, so this is a conservative compatibility policy, not a
-claim of live verification. Check X's `?` menu when reviewing a live release.
-
-Existing `GM_openInTab` permission,
-options (`active: false`, `insert: true`, `setParent: true`), and error feedback
-are reused, without `click()` or a foreground-tab fallback. Missing/failed APIs
-show an error; promise-returning APIs are not treated as synchronous acceptance
-for cancelling the digit event. Background behavior ultimately depends on the
-userscript manager. These safeguards are fixture-tested, not an exhaustive
-verification of live X's shortcut implementation.
+The optional **1–0 / d/e/q/y/z** badges are temporarily disabled to prioritize
+usable masonry scrolling. No badge initialization, scroll listener, observer or
+hit testing runs, and those keys pass through to X. There is no new opt-in.
+Use **j/k** to focus a post, then **w** to open its own permalink in a background
+tab. **v/c**, **Space**, native prefix sequences and existing guards are unchanged.
+Scroll-only masonry work reuses cached geometry; actual card growth, feed width
+and list changes still update layout and native loading.
 
 Quote presentation is left to X's native content. Content
 shown as two visually linked cards stays in two cards; this integration does
 not restore, merge, move, or restyle quotes. Own-post keyboard targets exclude
-native inline quote timestamps as well as nested quote articles. If only a
-quoted permalink is available, the enclosing post receives no digit badge
-rather than opening that quoted target.
+native inline quote timestamps as well as nested quote articles. A quoted
+permalink is never substituted for the enclosing post's own shortcut target.
 
 ## Rust CLI (`xps-render`) Features
 
@@ -238,7 +207,7 @@ Rendering details:
 
 ## Installation
 
-Current userscript release: **0.5.17**. See [changelog](CHANGELOG.md).
+Current userscript release: **0.5.18**. See [changelog](CHANGELOG.md).
 
 ### Userscript
 
@@ -371,17 +340,25 @@ node scripts/check-panel-browser.js
 ```bash
 node scripts/check-standalone-masonry-browser.js
 node scripts/check-masonry-activation-browser.js
+node scripts/check-masonry-scroll-browser.js
 ```
 
   Injects only source or the shipped XPostSaver bundle into a native one-column,
   absolute/transformed synthetic virtual list. No external script, CSS or
   `.xopt` class is supplied. Measures unequal-height columns, full width at
-  1000/1440/1920/2560, intact nested quotes, non-overlap, real digit key background
-  calls, native drawer controls, delayed media, item/container replacement,
+  1000/1440/1920/2560, intact nested quotes, non-overlap, paused badge keys,
+  native drawer controls, delayed media, item/container replacement,
   synthetic load-more, bounded rendered DOM, detail/back and toggle restoration,
   delayed mount and unsupported-scroller fallback. Evidence is written to
   `XPS_EVIDENCE` (default `/tmp/xps-standalone-evidence`).
   This does **not** validate live X pagination or a real userscript sandbox.
+  The scroll check uses 360 loaded posts, a 1440×900 viewport and a deterministic
+  wheel/stop/start workload for source and bundle. It records callback time/counts,
+  layout reads, style/DOM mutations, frame/key logs, screenshots and browser traces
+  in `XPS_EVIDENCE` (default `/tmp/xps-scroll-evidence`). It checks unchanged-scroll
+  work, delayed growth, recycled links, bounded loading, detail/back and paused
+  keys with j/w retained. Timing is noisy synthetic evidence, not physical smoothness.
+  `--baseline` labels only a pre-repair .17 checkout and refuses a newer bundle.
   The activation gate separately checks same-container late hydration, finite
   retry exhaustion/event recovery, distinct page-world expando access, native
   callback discovery, route/replacement restoration and unknown-entry fallback
@@ -399,14 +376,13 @@ node scripts/check-masonry-activation-browser.js
 node scripts/check-masonry-browser.js
 ```
 
-  Tests source and shipped bundle, both script load orders, late upstream CSS,
-  nested fixed-width navigation/feed wrappers, original controls/menus, inert
+  Tests source and shipped bundle, both script load orders,
+  nested navigation/feed wrappers, original controls, inert
   keyboard traversal, drawer toggling, viewport restoration, and SPA replacement.
-  Also verifies digit badges/background calls, key exhaustion, guards,
-  scrolling, occlusion, recycled cards/URLs, and stale-key/layout/route safety.
+  Verifies paused badge keys pass through, retained w/v/c and j/k commands,
+  paging, detail/back and external-layout compatibility.
   `XPS_EVIDENCE` defaults to `/tmp/xps-masonry-sidebar-evidence`; its `v2/`
-  directory contains before/full-feed/drawer/portrait/badge screenshots and
-  `masonry-measurements.json` with widths and simulated tab calls.
+  directory contains source/bundle screenshots and `masonry-measurements.json`.
   The fixture models upstream 1.7.7 layout rules; it never executes upstream
   network/React patches or uses a live account. At widths 1000, 1280, 1440,
   1920, and 2560 it verifies zero navigation reservation and full-width feed/
@@ -424,7 +400,7 @@ node scripts/check-masonry-quotes-browser.js
   contexts, with source/bundle and both load orders. Tests inline and nested
   quotes, media/delayed height changes, original linked-card node preservation,
   no clipping/overlap, outer action-bar ownership, quote link reachability and
-  own-post digit targets. Evidence is under `XPS_EVIDENCE/v3-quotes/final/`.
+  focused own-post w targets. Evidence is under `XPS_EVIDENCE/v3-quotes/final/`.
   The linked-card fixture is synthetic, not a captured live-X representation;
   no React-derived quote navigation, video decoding, or live account is tested.
 

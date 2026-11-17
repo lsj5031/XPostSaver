@@ -317,14 +317,11 @@ try {
           assert.equal(await page.evaluate(() => window.activationFixture.renderCalls()), calls,
             'unmatched cards and console warnings do not cause native refresh churn');
           if (scenario === 'wrong-post') {
-            const badge = page.locator('.xps-masonry-key').first();
-            await badge.waitFor({ state:'visible' });
-            const url = await badge.getAttribute('data-url');
-            const key = await badge.textContent();
+            assert.equal(await page.locator('.xps-masonry-key').count(), 0, 'badges paused');
             await page.evaluate(() => document.activeElement.blur());
-            await page.keyboard.press(key);
-            assert.deepEqual(await page.evaluate(() => window.activationTabs), [url],
-              'bad native candidate cannot redirect a valid neighboring badge');
+            await page.keyboard.press('1');
+            assert.deepEqual(await page.evaluate(() => window.activationTabs), [],
+              'paused badge keys never open a candidate URL');
           }
         }
         if (shapes.includes(scenario) || ['no-own-permalink', 'opaque-position'].includes(scenario)) {
