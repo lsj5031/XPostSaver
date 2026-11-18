@@ -261,9 +261,10 @@ try {
       });
       await settled(page);
       await blur(page);
-      assert.equal(await page.locator('.xps-masonry-key, #xps-masonry-keys').count(), 0, 'visible-post badges paused in .18');
-      for (const key of '1234567890deqyz') assert.equal(await press(page, key), false);
-      assert.equal(await countCalls(page), 0);
+      const hints = await page.locator('.xps-masonry-key').evaluateAll((nodes) => nodes.map((n) => [n.textContent,n.dataset.url]));
+      assert.ok(hints.length > 0 && hints.every(([,url]) => url.startsWith('https://x.com/fixture/status/')));
+      for (const key of '1234567890deqyz') assert.equal(await press(page, key), hints.some(([k]) => k === key));
+      assert.equal(await countCalls(page), hints.length);
       // Missing/rejected/throwing API: shared error feedback, no active-tab fallback.
       for (const failure of ['missing','throw','null','false','reject']) {
         await page.evaluate((failure) => {
@@ -338,5 +339,5 @@ try {
   }
   assert.deepEqual(errors, []);
   await writeFile(`${output}/masonry-measurements.json`, JSON.stringify({ measurements, calls }, null, 2));
-  console.log(`Passed source/bundle, both load orders, full-width 1000/1280/1440/1920/2560, inert drawer, retained shortcuts, paused badges and background API guards. Evidence: ${output}`);
+  console.log(`Passed source/bundle, both load orders, full-width layout, inert drawer, shortcuts and background API guards. Evidence: ${output}`);
 } finally { await browser.close(); }

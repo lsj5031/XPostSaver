@@ -6,16 +6,17 @@ import { createHash } from 'node:crypto';
 import { buildSync } from 'esbuild';
 
 const require = createRequire(import.meta.url);
-for (const name of ['XPS_PLAYWRIGHT','XPS_CHROMIUM','XPS_MASONRY_UPSTREAM']) {
+const standalone = process.argv.includes('--standalone');
+for (const name of ['XPS_PLAYWRIGHT','XPS_CHROMIUM',...(standalone ? [] : ['XPS_MASONRY_UPSTREAM'])]) {
   if (!process.env[name]) throw new Error(`Set ${name} to an absolute local path.`);
 }
 const { chromium } = require(process.env.XPS_PLAYWRIGHT);
 const output = `${process.env.XPS_EVIDENCE || '/tmp/xps-masonry-sidebar-evidence'}/v3-quotes/${process.env.XPS_QUOTE_PHASE || 'final'}`;
 await mkdir(output,{recursive:true});
-const upstream = await readFile(process.env.XPS_MASONRY_UPSTREAM,'utf8');
+const upstream = standalone ? null : await readFile(process.env.XPS_MASONRY_UPSTREAM,'utf8');
 const source = buildSync({ entryPoints:[new URL('../src/main.js',import.meta.url).pathname],bundle:true,write:false,format:'iife',loader:{'.css':'text'} }).outputFiles[0].text;
 const bundle = await readFile(new URL('../x-post-saver-enhanced.user.js',import.meta.url),'utf8');
-const native = await readFile(new URL('../tests/fixtures/masonry-navigation.html',import.meta.url),'utf8');
+const native = (await readFile(new URL('../tests/fixtures/masonry-navigation.html',import.meta.url),'utf8')).replace(' xopt-page-wide','');
 const image = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="420" height="140"><rect width="420" height="140" fill="#447799"/><text x="10" y="70" fill="white">Offline quoted media</text></svg>').toString('base64')}`;
 const bar = '<div role="group"><button data-testid="reply">Reply</button><button data-testid="like">Like</button></div>';
 function quote(id, tag='div', media='') {
@@ -43,7 +44,7 @@ const html = native.replace('<head>','<head><script nonce="offline-fixture"></sc
   .visual-connection { border-left:3px solid #447799; padding-left:12px; }
   </style>`);
 const browser = await chromium.launch({ executablePath:process.env.XPS_CHROMIUM,headless:true,args:['--disable-background-networking'] });
-const results = { upstreamSHA256:createHash('sha256').update(upstream).digest('hex'), browser:browser.version(), correction:'Quote content is present as two visually linked cards. Preserve representation; no missing-content repair.', scenarios:[] };
+const results = { upstreamSHA256:upstream && createHash('sha256').update(upstream).digest('hex'), browser:browser.version(), correction:'Quote content is present as two visually linked cards. Preserve representation; no missing-content repair.', scenarios:[] };
 
 async function settle(page) {
   await page.waitForTimeout(550);
@@ -91,7 +92,7 @@ function assertRendering(value) {
 
 try {
   for(const [kind,code] of [['source',source],['bundle',bundle]]) {
-    for(const order of ['upstream-first','saver-first']) {
+    for(const order of standalone ? ['standalone'] : ['upstream-first','saver-first']) {
       const context=await browser.newContext({viewport:{width:1440,height:1100},serviceWorkers:'block',reducedMotion:'reduce'});
       const page=await context.newPage();
       const errors=[], requests=[];
@@ -124,13 +125,15 @@ try {
       },cells);
       const prefix=`${kind}-${order}`;
       if(order==='saver-first') await page.addScriptTag({content:code});
-      await page.addScriptTag({content:upstream});
-      await page.waitForFunction(()=>document.__xopt_masonry_installed&&document.querySelector('.xopt-masonry-container'));
+      if (upstream) {
+        await page.addScriptTag({content:upstream});
+        await page.waitForFunction(()=>document.__xopt_masonry_installed&&document.querySelector('.xopt-masonry-container'));
+      }
       await settle(page);
       const before=await render(page);
       assertRendering(before);
-      await page.screenshot({path:`${output}/${prefix}-01-${order==='upstream-first'?'upstream-only':'both-saver-first'}.png`,fullPage:true});
-      if(order==='upstream-first') await page.addScriptTag({content:code});
+      await page.screenshot({path:`${output}/${prefix}-01-before.png`,fullPage:true});
+      if(order!=='saver-first') await page.addScriptTag({content:code});
       await settle(page);
       const after=await render(page);
       const scenario={kind,order,before,after,errors,requests};
@@ -148,10 +151,12 @@ try {
       for(const [id,url] of [[101,'https://x.com/outer/status/101'],[102,'https://x.com/outer/status/102'],[103,'https://x.com/outer/status/103'],[104,'https://x.com/outer/status/104'],[106,'https://x.com/outer/status/106'],[108,'https://x.com/outer/status/108'],[908,'https://x.com/outer/status/908']]) {
         await page.locator(`#post-${id}`).scrollIntoViewIfNeeded();
         await settle(page);
-        assert.deepEqual((await render(page)).targets,[],'visible-post badges are paused');
+        const targets=(await render(page)).targets;
+        assert.ok(targets.some((b)=>b.article===`post-${id}` && b.url===url),'visible outer post owns its badge');
+        assert.ok(targets.every((b)=>!b.url.includes('/quoted/')),'no quote-only shortcut targets');
         await page.locator(`#post-${id}`).evaluate((node)=>{node.tabIndex=0;node.focus({preventScroll:true});});
         const state=await page.evaluate(()=>({x:scrollX,y:scrollY,focus:document.activeElement.tagName,count:window.calls.length}));
-        await page.keyboard.press('w');
+        await page.keyboard.press(targets.find((b)=>b.article===`post-${id}`).key);
         assert.deepEqual(await page.evaluate(()=>({x:scrollX,y:scrollY,focus:document.activeElement.tagName})),{x:state.x,y:state.y,focus:state.focus});
         assert.equal(await page.evaluate(()=>window.calls.length),state.count+1);
         assert.deepEqual(await page.evaluate(()=>window.calls.at(-1)),{url,options:{active:false,insert:true,setParent:true}});
@@ -174,7 +179,7 @@ try {
       await page.waitForFunction(()=>document.querySelector('#delayed-image').naturalWidth>0);
       await settle(page);
       const imageHeight=await page.locator('#post-105').evaluate((node)=>node.getBoundingClientRect().height);
-      assert.ok(quoteHeight>initialHeight&&imageHeight>quoteHeight,'real upstream reacts to delayed quote/media height');
+      assert.ok(quoteHeight>initialHeight&&imageHeight>quoteHeight,'layout reacts to delayed quote/media height');
       scenario.delayed={initialHeight,quoteHeight,imageHeight,state:await render(page)};
       assertRendering(scenario.delayed.state);
       await page.screenshot({path:`${output}/${prefix}-03-delayed-media.png`,fullPage:true});
@@ -191,7 +196,7 @@ try {
       await context.close();
     }
   }
-  console.log(`Passed whole upstream + source/bundle, both load orders, quotes/media/linked-card preservation and own-post digit selection. Evidence: ${output}`);
+  console.log(`Passed ${standalone ? 'standalone' : 'upstream integration'} source/bundle quotes/media/linked-card preservation and own-post shortcut selection. Evidence: ${output}`);
 } finally {
   await writeFile(`${output}/results.json`,JSON.stringify(results,null,2));
   await browser.close();

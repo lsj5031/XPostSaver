@@ -346,7 +346,7 @@ async function scrollLayoutStability(page, kind, known, bounded) {
   const common = bounded.cells.filter((a) => growth.cells.some((b) => b.id === a.id));
   assert.ok(common.length > 20);
   assert.ok(common.every((a) => a.x === growth.cells.find((b) => b.id === a.id).x), 'deep-scroll measurements never change committed columns');
-  assert.equal(await page.locator('.xps-masonry-key').count(), 0, 'deep media growth does not initialize paused badges');
+  assert.ok(await page.locator('.xps-masonry-key').count() >= growth.columns, 'deep visible posts retain shortcuts');
   await page.evaluate(() => {
     window.fixture.data.splice(0, window.fixture.data.length, ...window.fixture.data.map((item) => ({ ...item })));
     window.fixture.scroller._handleScroll();
@@ -373,6 +373,170 @@ async function scrollLayoutStability(page, kind, known, bounded) {
   await writeFile(`${output}/${kind}-layout-scroll-summary.json`, JSON.stringify({ common:common.length, returned:returned.length, mismatches }, null, 2));
 }
 
+async function hintStability(page, kind) {
+  await page.evaluate(() => {
+    window.hintNodes = [...document.querySelectorAll('.xps-masonry-key')];
+    window.hintFrames = [];
+  });
+  const frames = await page.evaluate(async () => {
+    for (let frame = 0; frame < 36; frame++) {
+      document.dispatchEvent(new Event('xps-masonry-change'));
+      window.dispatchEvent(new Event('resize'));
+      for (const name of ['load', 'transitionrun', 'transitionend', 'animationstart', 'animationend']) {
+        for (const target of document.querySelectorAll('header, video, .cell article')) target.dispatchEvent(new Event(name, { bubbles:true }));
+      }
+      await new Promise(requestAnimationFrame);
+      window.hintFrames.push({ frame, badges:[...document.querySelectorAll('.xps-masonry-key')].map((n) => ({
+        key:n.textContent, url:n.dataset.url, identity:window.hintNodes.indexOf(n), x:n.style.left, y:n.style.top,
+      })) });
+    }
+    return window.hintFrames;
+  });
+  await writeFile(`${output}/${kind}-hint-frames.json`, JSON.stringify(frames, null, 2));
+  await page.screenshot({ path:`${output}/${kind}-hint-burst.png` });
+  assert.ok(frames.every((f) => f.badges.length > 0), 'no blank badge frames during unchanged event bursts');
+  assert.ok(frames.every((f) => f.badges.length === frames[0].badges.length && f.badges.every((b, i) =>
+    b.identity === frames[0].badges[i].identity && b.identity >= 0 && b.key === frames[0].badges[i].key && b.url === frames[0].badges[i].url)), 'persistent badge nodes, keys and own URLs');
+}
+
+async function hintAssignments(page, kind) {
+  await page.setViewportSize({ width:2560, height:1800 });
+  await settle(page);
+  assert.equal(await page.locator('.xps-masonry-key').count(), 15, 'digit-first pool exhausts safely');
+  const displayed = await page.locator('.xps-masonry-key').evaluateAll((nodes) => nodes.map((n) => ({ key:n.textContent, url:n.dataset.url })));
+  assert.deepEqual(displayed.map((b) => b.key).sort(), [...'1234567890deqyz'].sort());
+  await page.evaluate(() => { document.activeElement.blur(); window.tabCalls = []; });
+  const beforeOpen = await page.evaluate(() => ({ y:scrollY, focus:document.activeElement.tagName }));
+  for (const badge of displayed) {
+    await page.keyboard.press(badge.key);
+    assert.deepEqual(await page.evaluate(() => window.tabCalls.at(-1)), {
+      url:badge.url, options:{ active:false, insert:true, setParent:true },
+    });
+  }
+  assert.equal(await page.evaluate(() => window.tabCalls.length), 15, 'one open per displayed key');
+  assert.deepEqual(await page.evaluate(() => ({ y:scrollY, focus:document.activeElement.tagName })), beforeOpen,
+    'background opens preserve scroll and focus');
+  const ignored = async (keys) => {
+    const before = await page.evaluate(() => window.tabCalls.length);
+    await page.keyboard.press(keys);
+    assert.equal(await page.evaluate(() => window.tabCalls.length), before, keys);
+  };
+  for (const key of 'abfghilmnoprstux') await ignored(key);
+  for (const prefix of ['g', 'a']) {
+    for (const key of '1234567890deqyz') { await ignored(prefix); await ignored(key); }
+  }
+  const nativeChains = await page.evaluate(() => {
+    document.querySelector('.cell article').focus({ preventScroll:true });
+    const before = { calls:window.tabCalls.length, y:scrollY };
+    let passed = true;
+    for (const prefix of ['g', 'a']) for (const key of 'abcdefghijklmnopqrstuvwxyz0123456789 ') {
+      for (const part of [prefix, key]) {
+        const event = new KeyboardEvent('keydown', { key:part, bubbles:true, cancelable:true });
+        document.activeElement.dispatchEvent(event);
+        passed &&= !event.defaultPrevented;
+      }
+    }
+    document.activeElement.blur();
+    return passed && window.tabCalls.length === before.calls && scrollY === before.y;
+  });
+  assert.equal(nativeChains, true, 'native prefix chains bypass every userscript handler, including a+Space');
+  for (const key of 'deqyz') {
+    for (const options of [{ repeat:true }, { isComposing:true }, { keyCode:229 }, { ctrlKey:true }, { altKey:true }, { metaKey:true }, { shiftKey:true }]) {
+      await page.locator('body').evaluate((node, options) => node.dispatchEvent(new KeyboardEvent('keydown', { bubbles:true, cancelable:true, ...options })), { key, ...options });
+    }
+  }
+  assert.equal(await page.evaluate(() => window.tabCalls.length), 15);
+  for (const markup of ['<input>', '<textarea></textarea>', '<select><option>x</option></select>', '<div contenteditable="true" tabindex="0"></div>', '<div role="slider" tabindex="0"></div>', '<div data-testid="videoPlayer"><button>Media</button></div>', '<audio controls></audio>']) {
+    await page.evaluate((markup) => {
+      const holder = document.createElement('div'); holder.id = 'guard-fixture'; holder.innerHTML = markup; document.body.append(holder);
+      const control = holder.querySelector('button') || holder.firstElementChild; control.tabIndex = 0; control.focus({ preventScroll:true });
+    }, markup);
+    await ignored('d');
+    await page.locator('#guard-fixture').evaluate((n) => n.remove());
+  }
+  await page.evaluate(() => {
+    window.stableBadges = [...document.querySelectorAll('.xps-masonry-key')].map((node) => ({
+      node, key:node.textContent, url:node.dataset.url, top:node.style.top,
+      card:[...document.querySelectorAll('.cell > article')].find((c) => c.querySelector('a').href === node.dataset.url),
+    }));
+    const post = document.querySelector('.cell article');
+    post.querySelector('[data-testid="tweetText"]').insertAdjacentHTML('beforeend', '<img width="240" height="80" alt="Offline layout growth" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22240%22 height=%2280%22/%3E">');
+    post.querySelector('time').textContent = 'Counter/media update';
+  });
+  const reflowFrames = await page.evaluate(async () => {
+    const frames = [];
+    for (let frame = 0; frame < 36; frame++) {
+      await new Promise(requestAnimationFrame);
+      const interior = window.stableBadges.filter(({card}) => {
+        const r = card.getBoundingClientRect();
+        return r.top >= 40 && r.bottom < innerHeight-40;
+      });
+      frames.push({ frame, interior:interior.length, lost:interior.filter(({node,key,url}) =>
+        !node.isConnected || node.textContent !== key || node.dataset.url !== url).length,
+      badges:[...document.querySelectorAll('.xps-masonry-key')].map((n) => ({
+        key:n.textContent, url:n.dataset.url, identity:window.stableBadges.findIndex((b) => b.node === n), x:n.style.left, y:n.style.top,
+      })) });
+    }
+    return frames;
+  });
+  await writeFile(`${output}/${kind}-hint-reflow-frames.json`, JSON.stringify(reflowFrames, null, 2));
+  assert.ok(reflowFrames.every((f) => f.badges.length > 0), 'image reflow has no blank frames');
+  assert.ok(reflowFrames.every((f) => f.interior > 0 && f.lost === 0), 'every interior survivor keeps its actual label on every sampled frame');
+  await settle(page);
+  const geometry = await page.evaluate(() => {
+    const retained = window.stableBadges.filter((b) => [...document.querySelectorAll('.xps-masonry-key')].some((n) => n.dataset.url === b.url));
+    return { retained:retained.length, stable:retained.every((b) => b.node.isConnected && b.node.textContent === b.key), moved:retained.some((b) => b.node.style.top !== b.top) };
+  });
+  await writeFile(`${output}/${kind}-hint-reflow-summary.json`, JSON.stringify(geometry, null, 2));
+  assert.ok(geometry.retained > 10 && geometry.stable && geometry.moved, 'reflow moves persistent nodes without reassigning survivors');
+  await page.screenshot({ path:`${output}/${kind}-hint-letters-reflow.png` });
+  // Recycled own URL, before observer/frame delivery: the old displayed key must not open.
+  const stale = await page.evaluate(() => {
+    const badge = document.querySelector('.xps-masonry-key');
+    const card = [...document.querySelectorAll('.cell article')].find((n) => n.querySelector('a')?.href === badge.dataset.url);
+    const anchor = card.querySelector('a');
+    const old = anchor.getAttribute('href'); anchor.setAttribute('href', '/fixture/status/999999');
+    const before = window.tabCalls.length;
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key:badge.textContent, bubbles:true, cancelable:true }));
+    const safe = window.tabCalls.length === before;
+    anchor.setAttribute('href', old);
+    return safe;
+  });
+  assert.equal(stale, true, 'independent own-identity validation');
+  for (const role of ['dialog', 'menu']) {
+    await page.evaluate((role) => {
+      const blocker = document.createElement('div'); blocker.id = 'hint-blocker';
+      blocker.setAttribute('role',role); blocker.textContent = 'Fixture'; document.body.append(blocker);
+    }, role);
+    await guarded(page, { key:'1' });
+    await page.locator('#hint-blocker').evaluate((node) => node.remove());
+  }
+  await page.evaluate(() => {
+    const cover = document.createElement('div'); cover.id = 'hint-cover'; cover.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#222'; document.body.append(cover);
+    window.coverCalls = window.tabCalls.length;
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key:'1', bubbles:true, cancelable:true }));
+  });
+  assert.equal(await page.evaluate(() => window.tabCalls.length === window.coverCalls), true);
+  await page.waitForFunction(() => document.querySelectorAll('.xps-masonry-key').length === 0);
+  await page.locator('#hint-cover').evaluate((n) => n.remove());
+  await page.waitForFunction(() => document.querySelectorAll('.xps-masonry-key').length === 15);
+  // Removing a card frees only its key; extra visible cards may consume it.
+  const survivors = await page.evaluate(() => {
+    const badges = [...document.querySelectorAll('.xps-masonry-key')];
+    window.survivingHints = badges.slice(1);
+    const card = [...document.querySelectorAll('.cell article')].find((n) => n.querySelector('a')?.href === badges[0].dataset.url);
+    card.style.visibility = 'hidden';
+    return badges[0].dataset.url;
+  });
+  await page.waitForFunction((url) => ![...document.querySelectorAll('.xps-masonry-key')].some((n) => n.dataset.url === url), survivors);
+  assert.equal(await page.evaluate(() => window.survivingHints.every((n) => n.isConnected)), true);
+  await page.locator('.cell article').first().evaluate((n) => n.style.removeProperty('visibility'));
+  await page.setViewportSize({ width:1440, height:900 });
+  await page.evaluate(() => window.scrollTo(0,0)); // subsequent media guard uses the video in row 2
+  await settle(page);
+  await page.evaluate(() => { window.tabCalls = []; });
+}
+
 async function guarded(page, options = {}, selector = 'body') {
   const before = await page.evaluate(() => window.tabCalls.length);
   const prevented = await page.locator(selector).first().evaluate((node, options) => {
@@ -382,6 +546,58 @@ async function guarded(page, options = {}, selector = 'body') {
   }, options);
   assert.equal(prevented, false);
   assert.equal(await page.evaluate(() => window.tabCalls.length), before);
+}
+
+// X disables hit testing on the list (not the cards) during scrolling, then
+// restores it on a style-only commit after the final scroll event.
+async function nativePointerPause(page, kind) {
+  const hints = page.locator('.xps-masonry-key');
+  const read = () => hints.evaluateAll((nodes) => nodes.map((n) => ({key:n.textContent,url:n.dataset.url})));
+  const initial = await read();
+  assert.ok(initial.length >= 3);
+  await page.evaluate(() => {
+    window.initialHints = [...document.querySelectorAll('.xps-masonry-key')];
+    document.querySelector('.timeline').style.pointerEvents = 'none';
+    window.dispatchEvent(new Event('resize')); // one update before native resume
+  });
+  await page.waitForTimeout(200);
+  const paused = await read();
+  const nativeOwnsInput = () => page.locator('.timeline').evaluate((f) =>
+    f.style.pointerEvents === 'none' && getComputedStyle(f).pointerEvents === 'none');
+  assert.equal(await nativeOwnsInput(), true);
+  await page.evaluate(() => { document.querySelector('.timeline').style.removeProperty('pointer-events'); });
+  await page.waitForTimeout(810); // no scroll, no other mutation dispatched
+  const stopped = await read();
+  await writeFile(`${output}/${kind}-pointer-pause.json`, JSON.stringify({initial,paused,stopped}));
+  assert.deepEqual(stopped, initial, 'a style-only native resume cannot strand an empty hint viewport');
+  assert.deepEqual(paused, initial, 'pausing pointer input must not unlabel painted posts');
+  assert.equal(await page.evaluate(() => window.initialHints.every(n => n.isConnected)), true);
+  await page.locator('.timeline').evaluate(f => { f.style.pointerEvents = 'none'; });
+  for (const delta of [450,850,1150,-640,-780,610]) {
+    await page.mouse.wheel(0,delta); await page.waitForTimeout(180);
+    const keys = await read();
+    assert.ok(keys.length > 0, 'visible posts stay labelled under wheel reversals');
+    assert.equal(await nativeOwnsInput(), true);
+    await page.keyboard.press(keys[0].key);
+    assert.deepEqual(await page.evaluate(() => window.tabCalls.at(-1)), {
+      url:keys[0].url, options:{active:false,insert:true,setParent:true},
+    });
+  }
+  const key = (await read())[0].key;
+  await page.evaluate(() => {
+    const cover = document.createElement('div');
+    cover.id = 'real-cover'; cover.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#123';
+    document.body.append(cover);
+  });
+  await page.keyboard.press(key);
+  assert.equal(await page.evaluate(() => window.tabCalls.length), 6, 'a real cover still blocks the shortcut');
+  await page.waitForFunction(() => !document.querySelector('.xps-masonry-key'));
+  await page.evaluate(() => {
+    document.querySelector('#real-cover').remove();
+    document.querySelector('.timeline').style.removeProperty('pointer-events');
+    window.scrollTo(0,0); window.tabCalls = [];
+  });
+  await settle(page);
 }
 try {
   for (const [kind, code] of [['source',source], ['bundle',bundle]]) {
@@ -401,9 +617,11 @@ try {
     await page.addScriptTag({ content:code });
     await settle(page);
     assert.ok(await page.evaluate(() => window.bridgeReads > 0));
+    await nativePointerPause(page, kind);
+    if (process.argv.includes('--pointer-pause')) { await context.close(); continue; }
     await layoutStability(page, kind);
     await layoutIdentities(page, kind);
-    assert.equal(await page.locator('.xps-masonry-key, #xps-masonry-keys').count(), 0, 'visible-post badges paused in .18');
+    await hintStability(page, kind);
     for (const width of [1000,1440,1920,2560]) {
       await page.setViewportSize({ width, height:900 });
       await settle(page);
@@ -418,12 +636,7 @@ try {
     }
     await page.setViewportSize({ width:1440, height:900 });
     await settle(page);
-    for (const key of '1234567890deqyz') {
-      assert.equal(await page.locator('body').evaluate((node, key) => {
-        const event = new KeyboardEvent('keydown', { key, bubbles:true, cancelable:true });
-        node.dispatchEvent(event); return event.defaultPrevented;
-      }, key), false, 'paused badge keys pass through');
-    }
+    await hintAssignments(page, kind);
     assert.deepEqual(await page.evaluate(() => window.tabCalls), []);
     const nativeChains = await page.evaluate(() => {
       document.querySelector('.cell article').focus({ preventScroll:true });
@@ -548,7 +761,7 @@ try {
     });
     await context.close();
   }
-  for (const mode of ['delayed','unsupported','nested','wrapped','opaque']) {
+  for (const mode of process.argv.includes('--pointer-pause') ? [] : ['delayed','unsupported','nested','wrapped','opaque']) {
     const context = await browser.newContext({ viewport:{ width:1440, height:900 } });
     await context.route('**/*', (route) => route.request().url() === 'https://x.com/home'
       ? route.fulfill({ contentType:'text/html', body:native }) : route.abort());

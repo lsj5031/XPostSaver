@@ -1,0 +1,6 @@
+#xps-masonry-keys { position:fixed; inset:0; pointer-events:none; z-index:3; contain:strict; }
+.xps-masonry-key {
+  position:absolute; width:28px; height:28px; box-sizing:border-box; text-align:center;
+  border:1px solid white; border-radius:5px; background:#202020; color:white;
+  font:bold 16px/26px monospace; box-shadow:0 1px 4px #0008; pointer-events:none;
+}

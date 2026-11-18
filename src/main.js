@@ -37,6 +37,8 @@ import {
 import uiCss from './main.css';
 import { initMasonryNavigation } from './masonry-navigation.js';
 import { initMasonry } from './masonry.js';
+import { initMasonryHints } from './masonry-hints.js';
+import hintsCss from './masonry-hints.css';
 import { isShortcutControl, isNativeShortcutSequence } from './keyboard.js';
 
 const STORAGE_KEY = 'xSavedPosts';
@@ -431,7 +433,7 @@ function ensureStyles() {
   const style = document.createElement('style');
   style.id = UI.styleId;
   style.textContent =
-    uiCss +
+    uiCss + hintsCss +
     `    #${UI.panelId} {
       position: fixed;
       right: 16px;
@@ -1770,6 +1772,10 @@ function init() {
     permalink: (article) => getTweetPermalink(article, { ownOnly:true }) });
   ensurePanel(masonry);
   initMasonryNavigation();
+  initMasonryHints({
+    eligible: (node) => !isArticleReadView(node) && !isInsideEmbeddedTweet(node) && !isInsideInlineQuote(node),
+    openBackground: openBackgroundPost,
+  });
   document.addEventListener('keydown', onPageScrollShortcut, true);
   document.addEventListener('keydown', onPostNavigationShortcut, true);
   document.addEventListener('keydown', onPostShortcut, true);

@@ -102,8 +102,8 @@ coordinate objects pass through unchanged. Missing own permalinks, unknown or
 conflicting candidate IDs, reordered placeholders and delayed commits do not
 block visual layout. Unverified windows use estimated native geometry and pack
 the actual DOM cards locally, without caching measurements by guessed identity.
-Own permalinks are not required for layout. Visible-post shortcut badges are
-temporarily disabled in .18 to prioritize scrolling; no URL is guessed.
+Own permalinks are not required for layout. Only verified visible posts receive
+shortcut badges; no URL is guessed.
 Newly placed posts choose the shortest column, with approximately 320px minimum
 widths. Once placed, a post keeps its column for the current feed and column
 count when their identities are known. Unverified cards/windows may lose that
@@ -152,13 +152,15 @@ bookmark panel are unaffected. Verified with offline native-shaped DOM/layout
 fixtures, **not a live logged-in X account**; future X/upstream DOM changes may
 require compatibility updates.
 
-### Visible-post badges temporarily paused (v0.5.18)
+### Open a visible masonry post
 
-The optional **1–0 / d/e/q/y/z** badges are temporarily disabled to prioritize
-usable masonry scrolling. No badge initialization, scroll listener, observer or
-hit testing runs, and those keys pass through to X. There is no new opt-in.
-Use **j/k** to focus a post, then **w** to open its own permalink in a background
-tab. **v/c**, **Space**, native prefix sequences and existing guards are unchanged.
+Press the **single key shown on the card** to open that post in a background
+tab without moving focus. Badges use **1–0**, then **d/e/q/y/z**, for up to
+15 visible posts. A card keeps its key while it stays eligible. Nested quotes,
+covered posts and cards without a verified own timestamp link are not targets.
+Unassigned keys pass through; editors, media controls, dialogs, the navigation
+drawer and native `g`/`a` sequences keep their keys. **j/k**, then **w**, still
+works for a focused post, as do **v/c** and **Space**.
 Scroll-only masonry work reuses cached geometry; actual card growth, feed width
 and list changes still update layout and native loading.
 
@@ -346,7 +348,7 @@ node scripts/check-masonry-scroll-browser.js
   Injects only source or the shipped XPostSaver bundle into a native one-column,
   absolute/transformed synthetic virtual list. No external script, CSS or
   `.xopt` class is supplied. Measures unequal-height columns, full width at
-  1000/1440/1920/2560, intact nested quotes, non-overlap, paused badge keys,
+  1000/1440/1920/2560, intact nested quotes, non-overlap, single-key opens,
   native drawer controls, delayed media, item/container replacement,
   synthetic load-more, bounded rendered DOM, detail/back and toggle restoration,
   delayed mount and unsupported-scroller fallback. Evidence is written to
@@ -356,8 +358,8 @@ node scripts/check-masonry-scroll-browser.js
   wheel/stop/start workload for source and bundle. It records callback time/counts,
   layout reads, style/DOM mutations, frame/key logs, screenshots and browser traces
   in `XPS_EVIDENCE` (default `/tmp/xps-scroll-evidence`). It checks unchanged-scroll
-  work, delayed growth, recycled links, bounded loading, detail/back and paused
-  keys with j/w retained. Timing is noisy synthetic evidence, not physical smoothness.
+  work, delayed growth, recycled links, bounded loading, detail/back and shortcut
+  behavior with j/w retained. Timing is synthetic evidence, not physical smoothness.
   `--baseline` labels only a pre-repair .17 checkout and refuses a newer bundle.
   The activation gate separately checks same-container late hydration, finite
   retry exhaustion/event recovery, distinct page-world expando access, native
@@ -379,7 +381,7 @@ node scripts/check-masonry-browser.js
   Tests source and shipped bundle, both script load orders,
   nested navigation/feed wrappers, original controls, inert
   keyboard traversal, drawer toggling, viewport restoration, and SPA replacement.
-  Verifies paused badge keys pass through, retained w/v/c and j/k commands,
+  Verifies unassigned keys pass through, retained w/v/c and j/k commands,
   paging, detail/back and external-layout compatibility.
   `XPS_EVIDENCE` defaults to `/tmp/xps-masonry-sidebar-evidence`; its `v2/`
   directory contains source/bundle screenshots and `masonry-measurements.json`.

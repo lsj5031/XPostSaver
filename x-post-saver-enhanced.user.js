@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.5.19
+// @version      0.6.0
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1773,6 +1773,205 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   }
   __name(isNativeShortcutSequence, "isNativeShortcutSequence");
 
+  // src/masonry-hints.js
+  var KEYS = "1234567890deqyz";
+  var POST2 = 'article,[data-testid="tweet"]';
+  var FEED = '[data-testid="primaryColumn"] :is(.xps-masonry-container,.xopt-masonry-container)';
+  var MODAL = 'dialog[open],[aria-modal="true"],[role="dialog"],[role="alertdialog"],[role="menu"],[data-testid="Dropdown"],:popover-open';
+  var QUOTE = 'div[role="link"],[data-testid="embeddedTweet"],[data-testid="testCondensedMedia"],[data-testid="card.wrapper"],[data-testid="tweetText"]';
+  function ownUrl(card, eligible) {
+    const urls = /* @__PURE__ */ new Set();
+    for (const time of card.querySelectorAll('a[href*="/status/"] time')) {
+      const link = time.closest("a");
+      if (time.closest(POST2) !== card || link.closest(QUOTE) || !eligible(time)) continue;
+      if (/^\/(?:[^/]+\/status|i\/web\/status|status)\/\d+\/?$/.test(link.pathname)) {
+        const url = canonicalizeStatusUrl(link.href);
+        if (url) urls.add(url);
+      }
+    }
+    return urls.size === 1 ? [...urls][0] : null;
+  }
+  __name(ownUrl, "ownUrl");
+  function initMasonryHints({ eligible, openBackground }) {
+    if (typeof IntersectionObserver !== "function" || !document.elementFromPoint) return;
+    const layer = document.createElement("div");
+    layer.id = "xps-masonry-keys";
+    layer.setAttribute("aria-hidden", "true");
+    const assigned = /* @__PURE__ */ new Map(), near = /* @__PURE__ */ new Map();
+    let source = null, frame = 0, route = location.href;
+    const probeStyle = document.createElement("style");
+    document.head.append(probeStyle);
+    const sheet = probeStyle.sheet;
+    if (sheet) {
+      sheet.disabled = true;
+      sheet.insertRule('[data-testid="primaryColumn"] .xps-masonry-container { pointer-events:auto !important }');
+    }
+    function probe(read) {
+      if (!sheet || !source?.matches(".xps-masonry-container") || source.style.pointerEvents !== "none" || getComputedStyle(source.parentElement).pointerEvents === "none") return read();
+      sheet.disabled = false;
+      try {
+        return read();
+      } finally {
+        sheet.disabled = true;
+      }
+    }
+    __name(probe, "probe");
+    function forget(cell) {
+      near.get(cell)?.edits.disconnect();
+      near.delete(cell);
+    }
+    __name(forget, "forget");
+    const io = new IntersectionObserver((entries) => {
+      for (const { target, isIntersecting } of entries) {
+        const wanted = isIntersecting && target.parentElement === source;
+        if (near.has(target) === wanted) continue;
+        if (wanted) {
+          const bucket = { posts: null, edits: new MutationObserver(() => {
+            bucket.posts = null;
+            schedule();
+          }) };
+          const edits = bucket.edits;
+          edits.observe(target, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ["href", "role", "data-testid", "aria-label", "hidden", "aria-hidden", "inert", "style", "class"]
+          });
+          near.set(target, bucket);
+        } else forget(target);
+        schedule();
+      }
+    }, { rootMargin: "180px 0px" });
+    const changes = new MutationObserver((records) => {
+      for (const r of records) {
+        if (r.target !== source || r.type !== "childList") continue;
+        for (const cell of r.removedNodes) if (cell instanceof Element && cell.parentElement !== source) {
+          io.unobserve(cell);
+          forget(cell);
+        }
+        for (const cell of r.addedNodes) if (cell instanceof Element) io.observe(cell);
+      }
+      schedule();
+    });
+    function blocked() {
+      return document.hidden || /\/status\/\d+(?:\/|$)/.test(location.pathname) || document.querySelector(".xps-nav-open,.xopt-status-detail") || [...document.querySelectorAll(MODAL)].some((el) => el.checkVisibility({ visibilityProperty: true }));
+    }
+    __name(blocked, "blocked");
+    function exposed(card, x, y) {
+      const hit = document.elementFromPoint(x, y);
+      return hit && hit.closest(POST2) === card && !hit.closest('div[role="link"],[data-testid="embeddedTweet"]') && eligible(hit);
+    }
+    __name(exposed, "exposed");
+    function locate(cell, card, url) {
+      if (!url || card.parentElement?.closest(POST2) || !eligible(card) || card.closest('[hidden],[inert],[aria-hidden="true"],aside,[data-testid="UserCell"]') || !card.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return;
+      const r = card.getBoundingClientRect();
+      const l = Math.max(0, r.left), t = Math.max(0, r.top), b = Math.min(innerHeight, r.bottom), end = Math.min(innerWidth, r.right);
+      if (end - l < 36 || b - t < 36) return;
+      if (Number(getComputedStyle(cell).opacity) < 0.1) return;
+      for (const y of [t + 4, (t + b - 28) / 2, b - 32]) for (const x of [l + 4, end - 32]) {
+        if (exposed(card, x + 14, y + 14) && exposed(card, x + 1, y + 1) && exposed(card, x + 27, y + 27)) return { card, cell, url, x, y };
+      }
+    }
+    __name(locate, "locate");
+    function remove(card) {
+      assigned.get(card).badge.remove();
+      assigned.delete(card);
+    }
+    __name(remove, "remove");
+    function reconcile() {
+      frame = 0;
+      const feed = document.querySelector(FEED);
+      if (source !== feed || route !== location.href) {
+        for (const card of assigned.keys()) remove(card);
+        changes.disconnect();
+        io.disconnect();
+        for (const cell of near.keys()) forget(cell);
+        source = feed;
+        route = location.href;
+        if (source) {
+          for (const cell of source.children) io.observe(cell);
+          changes.observe(source, { childList: true, attributes: true, attributeFilter: ["class", "hidden", "inert", "aria-hidden"] });
+        }
+      }
+      const current = /* @__PURE__ */ new Map();
+      if (near.size && source && !blocked()) probe(() => {
+        for (const [cell, bucket] of near) {
+          bucket.posts ??= [...cell.matches(POST2) ? [cell] : cell.querySelectorAll(POST2)].filter((card) => !card.parentElement?.closest(POST2)).map((card) => [card, ownUrl(card, eligible)]);
+          for (const [card, url] of bucket.posts) {
+            const entry = locate(cell, card, url);
+            if (entry) current.set(card, entry);
+          }
+        }
+      });
+      for (const [card, old] of assigned) if (old.url !== current.get(card)?.url) remove(card);
+      const used = new Set([...assigned.values()].map((a) => a.key));
+      const free = [...KEYS].filter((key) => !used.has(key));
+      for (const entry of [...current.values()].sort((a, b) => a.y - b.y || a.x - b.x)) {
+        let slot = assigned.get(entry.card);
+        if (!slot) {
+          const key = free.shift();
+          if (!key) continue;
+          const badge = document.createElement("span");
+          badge.className = "xps-masonry-key";
+          badge.textContent = key;
+          badge.dataset.url = entry.url;
+          slot = { key, badge, ...entry };
+          assigned.set(entry.card, slot);
+          if (!layer.isConnected) document.documentElement.append(layer);
+          layer.append(badge);
+        }
+        const { style } = slot.badge;
+        if (style.left !== `${entry.x}px`) style.left = `${entry.x}px`;
+        if (style.top !== `${entry.y}px`) style.top = `${entry.y}px`;
+      }
+      if (!assigned.size && layer.isConnected) layer.remove();
+    }
+    __name(reconcile, "reconcile");
+    function schedule() {
+      if (!frame) frame = requestAnimationFrame(reconcile);
+    }
+    __name(schedule, "schedule");
+    let lastY = scrollY, lastX = scrollX;
+    window.addEventListener("scroll", () => {
+      if (lastY === scrollY && lastX === scrollX) return;
+      lastY = scrollY;
+      lastX = scrollX;
+      schedule();
+    }, { passive: true });
+    window.addEventListener("resize", schedule);
+    window.addEventListener("popstate", schedule);
+    for (const event of ["xps-masonry-change", "visibilitychange", "toggle"]) document.addEventListener(event, schedule, true);
+    document.addEventListener("xps-navigation-change", () => {
+      if (document.querySelector(".xps-nav-open") || source && !source.matches(FEED)) {
+        for (const card of assigned.keys()) remove(card);
+      }
+      schedule();
+    });
+    new MutationObserver((records) => {
+      if (records.some((r) => !source?.contains(r.target))) schedule();
+    }).observe(document.body, { subtree: true, childList: true });
+    document.addEventListener("keydown", (event) => {
+      if (isNativeShortcutSequence(event) || event.key.length !== 1 || !KEYS.includes(event.key) || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || isShortcutControl(event) || [event.target, document.activeElement].some((n) => n instanceof Element && n.closest('nav,[role="navigation"],header[role="banner"],.xps-nav-toggle,#xps-panel'))) return;
+      const slot = [...assigned.values()].find((a) => a.key === event.key);
+      if (!slot) return;
+      const { card, cell, badge, url } = slot;
+      const r = badge.getBoundingClientRect();
+      if (route !== location.href || document.querySelector(FEED) !== source || blocked() || cell.parentElement !== source || !cell.contains(card) || !badge.isConnected || ownUrl(card, eligible) !== url || !probe(() => locate(cell, card, url) && exposed(card, r.x + 14, r.y + 14))) {
+        schedule();
+        return;
+      }
+      if (openBackground(url)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, true);
+    schedule();
+  }
+  __name(initMasonryHints, "initMasonryHints");
+
+  // src/masonry-hints.css
+  var masonry_hints_default = "#xps-masonry-keys { position:fixed; inset:0; pointer-events:none; z-index:3; contain:strict; }\n.xps-masonry-key {\n  position:absolute; width:28px; height:28px; box-sizing:border-box; text-align:center;\n  border:1px solid white; border-radius:5px; background:#202020; color:white;\n  font:bold 16px/26px monospace; box-shadow:0 1px 4px #0008; pointer-events:none;\n}\n";
+
   // src/main.js
   var STORAGE_KEY = "xSavedPosts";
   var STORAGE_SYNC_KEY = "xpsSync";
@@ -2123,7 +2322,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     if (document.getElementById(UI.styleId)) return;
     const style = document.createElement("style");
     style.id = UI.styleId;
-    style.textContent = main_default + `    #${UI.panelId} {
+    style.textContent = main_default + masonry_hints_default + `    #${UI.panelId} {
       position: fixed;
       right: 16px;
       bottom: 16px;
@@ -3243,6 +3442,10 @@ ${longform}`;
     });
     ensurePanel(masonry);
     initMasonryNavigation();
+    initMasonryHints({
+      eligible: /* @__PURE__ */ __name((node) => !isArticleReadView(node) && !isInsideEmbeddedTweet(node) && !isInsideInlineQuote(node), "eligible"),
+      openBackground: openBackgroundPost
+    });
     document.addEventListener("keydown", onPageScrollShortcut, true);
     document.addEventListener("keydown", onPostNavigationShortcut, true);
     document.addEventListener("keydown", onPostShortcut, true);

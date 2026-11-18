@@ -317,11 +317,11 @@ try {
           assert.equal(await page.evaluate(() => window.activationFixture.renderCalls()), calls,
             'unmatched cards and console warnings do not cause native refresh churn');
           if (scenario === 'wrong-post') {
-            assert.equal(await page.locator('.xps-masonry-key').count(), 0, 'badges paused');
+            const badge = await page.locator('.xps-masonry-key').first().evaluate((n) => ({ key:n.textContent, url:n.dataset.url }));
             await page.evaluate(() => document.activeElement.blur());
-            await page.keyboard.press('1');
-            assert.deepEqual(await page.evaluate(() => window.activationTabs), [],
-              'paused badge keys never open a candidate URL');
+            await page.keyboard.press(badge.key);
+            assert.deepEqual(await page.evaluate(() => window.activationTabs), [badge.url],
+              'post navigation uses the DOM permalink, not the conflicting native entry');
           }
         }
         if (shapes.includes(scenario) || ['no-own-permalink', 'opaque-position'].includes(scenario)) {

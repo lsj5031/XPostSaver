@@ -116,7 +116,7 @@ try {
             bump(record.type === 'attributes' ? 'attributeMutations' : 'childMutations');
             if (record.target.closest?.('#xps-masonry-keys')) bump('badgeMutations');
           }
-        }).observe(document.body, { subtree:true, attributes:true, childList:true });
+        }).observe(document.documentElement, { subtree:true, attributes:true, childList:true });
         new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) { bump('longTasks'); window.metrics.longTaskMs = (window.metrics.longTaskMs || 0) + entry.duration; }
         }).observe({ type:'longtask', buffered:false });
@@ -151,6 +151,17 @@ try {
       await page.screenshot({ path:`${output}/${name}-03-stopped.png` });
       const metrics = await page.evaluate(() => ({ ...window.metrics, nativeRefreshes:window.nativeRefreshes }));
       const frames = await page.evaluate(() => window.frameLog);
+      if (label === 'fixed' && hints) {
+        let previous = new Map();
+        for (const frame of frames) {
+          assert.ok(frame.keys.length > 0 && frame.keys.length <= 15, 'populated scroll frame has bounded labels');
+          assert.equal(new Set(frame.keys.map(([key]) => key)).size, frame.keys.length);
+          for (const [key,url] of frame.keys) {
+            if (previous.has(url)) assert.equal(previous.get(url), key, 'surviving URL keeps its key during wheel reversals');
+          }
+          previous = new Map(frame.keys.map(([key,url]) => [url,key]));
+        }
+      }
       await writeFile(`${output}/${name}-frames.json`, JSON.stringify(frames));
       // Unchanged scroll notifications must not measure/rewrite every mounted card.
       await page.evaluate(() => { window.metrics = {}; window.nativeRefreshes = 0; });
@@ -163,17 +174,19 @@ try {
         assert.equal(unchanged.styleWrites || 0, 0, 'unchanged scroll never rewrites placement');
         assert.ok((unchanged.rectReads || 0) < 100, 'unchanged scroll does not measure every card');
         assert.equal(unchanged.childMutations || 0, 0, 'owned controls never rescan themselves in a mutation loop');
+        assert.equal(unchanged.badgeMutations || 0, 0, 'no badge mutations on unchanged scroll');
+        assert.equal(unchanged.hitTests || 0, 0, 'no badge hit tests on unchanged scroll');
         assert.equal(unchanged.nativeRefreshes, 12, 'only the fixture native listener handles unchanged scroll, no extra engine refresh');
-        assert.equal(await page.locator('.xps-masonry-key, #xps-masonry-keys').count(), 0, 'badges are paused');
+        assert.equal((await page.locator('.xps-masonry-key').count()) > 0, hints);
         const prevented = await page.evaluate(() => {
           const event = new KeyboardEvent('keydown', { key:'1', bubbles:true, cancelable:true });
           document.body.dispatchEvent(event); return event.defaultPrevented;
         });
-        assert.equal(prevented, false);
+        assert.equal(prevented, hints);
         await page.keyboard.press('j');
         assert.equal(await page.evaluate(() => document.activeElement?.matches('article.post')), true);
         await page.keyboard.press('w');
-        assert.equal(await page.evaluate(() => window.tabCalls.length), 1);
+        assert.equal(await page.evaluate(() => window.tabCalls.length), hints ? 2 : 1);
         await page.locator('.timeline').evaluate((node) => node.style.setProperty('width', '920px', 'important'));
         await page.waitForFunction(() => {
           const feed = document.querySelector('.timeline');

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- Open a visible masonry post in a background tab by pressing its displayed
+  digit or letter. Labels retain their keys through scrolling and media growth;
+  covered, recycled and quote-only targets cannot open an unrelated post.
+- Keep shortcut labels outside the feed. They do not measure for, write to or
+  change the viewport-first masonry layout introduced in 0.5.19.
+
 ## 0.5.18
 
 - Reuse native window geometry until list identities, estimates, card sizes or
