@@ -13,11 +13,12 @@ export function outerPosts(root) {
   });
 }
 
-export function masonryPositions(heights, columns, width, gap = 12, fullRows = new Set(), assigned = []) {
+export function masonryPositions(heights, columns, width, gap = 12, fullRows = new Set(), assigned = [], boundaries = new Set()) {
   const bottoms = Array(columns).fill(0);
   const placed = [];
   const cardWidth = (width - gap * (columns - 1)) / columns;
   const positions = heights.map((height, index) => {
+    if (boundaries.has(index)) bottoms.fill(Math.max(...bottoms));
     if (fullRows.has(index)) {
       const top = Math.max(...bottoms);
       if (height) bottoms.fill(top + height + gap);
@@ -38,9 +39,10 @@ export function masonryPositions(heights, columns, width, gap = 12, fullRows = n
 // loaded list on every update, so unloaded history and detached DOM cannot grow it.
 export function createMasonryLayout() {
   const placements = new Map(), measurements = new Map();
-  let count = 0;
+  let count = 0, currentWidth = 0;
   return {
     update(items, width) {
+      currentWidth = width;
       const columns = Math.max(1, Math.floor((width + 12) / 332));
       if (columns !== count) {
         for (const placed of placements.values()) placed.column = undefined;
@@ -49,21 +51,28 @@ export function createMasonryLayout() {
       const wanted = new Set(items.map((item) => item.key));
       for (const key of placements.keys()) if (!wanted.has(key)) placements.delete(key);
       for (const key of measurements.keys()) if (!wanted.has(key)) measurements.delete(key);
-      const fullRows = new Set();
+      const fullRows = new Set(), boundaries = new Set();
       const heights = items.map((item, i) => {
         if (measurements.get(item.key)?.fullRow ?? placements.get(item.key)?.fullRow ?? item.fullRow) fullRows.add(i);
-        return measurements.get(item.key)?.height ?? item.height ?? 320;
+        const placed = placements.get(item.key);
+        if (placed?.boundary) boundaries.add(i);
+        return measurements.get(item.key)?.height ?? (placed?.committed ? placed.height : undefined) ?? item.height ?? 320;
       });
       const layout = masonryPositions(heights, columns, width, 12, fullRows,
-        items.map((item) => placements.get(item.key)?.column));
+        items.map((item) => placements.get(item.key)?.column), boundaries);
       items.forEach((item, i) => {
-        const committed = placements.get(item.key)?.committed || measurements.has(item.key);
+        const measuredWidth = measurements.get(item.key)?.width ?? placements.get(item.key)?.measuredWidth;
+        const committed = measuredWidth !== undefined;
         // Estimated offscreen entries have not been placed yet. Their predictions
         // may change; measured/rendered identities commit their column just once.
         placements.set(item.key, { column:committed ? layout.columns[i] : undefined,
-          fullRow:fullRows.has(i), committed });
+          boundary:boundaries.has(i), fullRow:fullRows.has(i), committed, measuredWidth, height:heights[i] });
       });
       return { ...layout, heights };
+    },
+    startRun(key) {
+      const placed = placements.get(key);
+      if (placed) placed.boundary = true;
     },
     measure(key, height, width, fullRow) {
       const before = measurements.get(key), placed = placements.get(key);
@@ -77,6 +86,7 @@ export function createMasonryLayout() {
       while (measurements.size > 2000) measurements.delete(measurements.keys().next().value);
       return changed;
     },
+    hasMeasurement: (key) => (measurements.get(key)?.width ?? placements.get(key)?.measuredWidth) === currentWidth,
     size: () => ({ placements:placements.size, measurements:measurements.size }),
   };
 }
@@ -88,7 +98,7 @@ export function masonryEntry(entry) {
     String(value).trim() !== '' && (typeof value !== 'number' || Number.isFinite(value));
   // Native wrappers can own the list identity while item owns the render data,
   // or item can itself be the list key. Position is not an identity field.
-  const ids = [item?.id, item?.entryId, item?.key, entry?.id, entry?.entryId, entry?.key,
+  const ids = [item?.id, item?.entryId, item?.key, entry?.itemId, entry?.id, entry?.entryId, entry?.key,
     typeof item === 'object' ? undefined : item].filter(valid);
   const id = ids[0];
   if (id === undefined) return null;
@@ -162,7 +172,7 @@ export function initMasonry({ read, write, permalink }) {
   let refreshFrame = 0;
   const observed = new Set();
   let placement = createMasonryLayout();
-  let visualPlacement = createMasonryLayout();
+  let cellGeometry = new WeakMap();
   let activeRoute = '';
   let rejected = new WeakMap();
   let status = 'waiting for feed';
@@ -228,7 +238,7 @@ export function initMasonry({ read, write, permalink }) {
     active = null;
     layoutDirty = true;
     placement = createMasonryLayout();
-    visualPlacement = createMasonryLayout();
+    cellGeometry = new WeakMap();
     activeRoute = '';
     document.dispatchEvent(new Event('xps-masonry-change'));
     try { scroller?._handleScroll(); } catch { /* Native route may already be gone. */ }
@@ -262,7 +272,9 @@ export function initMasonry({ read, write, permalink }) {
 
   function refreshNow(scroller) {
     try {
-      if (typeof scroller._measureRelativeViewportRect === 'function' &&
+      // The normalizing scroller selects its anchor before measuring mounted
+      // heights. Let its native update entry point perform that whole sequence.
+      if (typeof scroller._getListOffset !== 'function' && typeof scroller._measureRelativeViewportRect === 'function' &&
           typeof scroller._getAnchor === 'function' &&
           typeof scroller._updateRenderedItems === 'function') {
         const rect = scroller._measureRelativeViewportRect();
@@ -321,19 +333,16 @@ export function initMasonry({ read, write, permalink }) {
       for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
       const next = result.allItemsWithPositions.map((entry, index) => {
         const parsed = parsedEntries[index];
-        if (parsed && counts.get(parsed.key) === 1) return { ...parsed,
-          height:state.estimatedHeight ?? parsed.height };
-        // Slot keys are only for estimated window geometry, never post ownership
-        // or cached DOM measurements. Local visual layout remains permissive.
+        if (parsed && counts.get(parsed.key) === 1) return parsed;
+        // Opaque slots own geometry/measurements, never semantic post identity.
+        // Keep them across rendered windows without requiring a native ID.
         return { key:typeof state.items[index]?.key === 'symbol' ? state.items[index].key : Symbol(`native slot ${index}`), entry,
-          height:state.estimatedHeight ?? (Number.isFinite(entry?.height) && entry.height > 0 ? entry.height : 320) };
+          height:Number.isFinite(entry?.height) && entry.height > 0 ? entry.height : 320 };
       });
       const changed = next.length !== state.items.length || next.some((item, i) =>
         item.key !== state.items[i].key || item.height !== state.items[i].height);
-      if (changed) {
-        state.items = next;
-        state.geometryDirty = true;
-      }
+      if (changed) state.geometryDirty = true;
+      state.items = next;
       const items = state.items;
       const width = container.clientWidth;
       if (!Number.isFinite(width) || width <= 0) return result;
@@ -347,17 +356,41 @@ export function initMasonry({ read, write, permalink }) {
       const y = Math.max(0, -container.getBoundingClientRect().top);
       const slice = masonryWindow(layout, y, innerHeight);
       if (!slice) { reject(container, 'unsupported: visible window exceeds safe limit'); return result; }
-      // Like .13, keep native entries and coordinate schemas untouched.
+      // Native positions remain native. A new cell's native height-cache miss
+      // normally hides it until a later native update. We size mounted cells
+      // before paint, so request visible cells without changing the cache.
       const positioned = result.allItemsWithPositions;
       const windowChanged = slice.start !== state.start || slice.end - slice.start !== state.rendered.length;
       state.rendered = items.slice(slice.start, slice.end);
       state.start = slice.start;
       if (dirty || windowChanged) wake();
-      return { ...result, allItemsWithPositions:positioned, newRenderedItems:positioned.slice(slice.start, slice.end),
+      const demand = positioned.slice(slice.start, slice.end).map((entry) =>
+        entry?.visible === false && entry.itemId != null && Number.isFinite(entry.offset)
+          ? Object.assign(Object.create(Object.getPrototypeOf(entry)), entry, { visible:true }) : entry);
+      return { ...result, allItemsWithPositions:positioned, newRenderedItems:demand,
         slice, arePreferredItemsRendered: true };
     };
     try {
       replace('_getRenderCandidates', candidates);
+      // Native cells normally use scalar offsets and normalize their origin in
+      // the setState callback. Our CSS does not use those offsets. Supply the
+      // same native anchor in its zero-origin frame *after* native measurement,
+      // so that callback has no second scroll correction to apply.
+      const update = scroller._updateRenderedItems;
+      if (typeof update === 'function' && typeof scroller._getListOffset === 'function') {
+        replace('_updateRenderedItems', function (anchor, ...rest) {
+          if (bridge === state && Number.isFinite(anchor?.offset)) {
+            try {
+              const offset = scroller._getListOffset(anchor);
+              if (Number.isFinite(offset) && offset !== 0) {
+                const aligned = { ...anchor, offset:anchor.offset - offset };
+                if (scroller._getListOffset(aligned) === 0) anchor = aligned;
+              }
+            } catch { /* Unknown anchor schema: preserve the native transaction. */ }
+          }
+          return update.call(scroller, anchor, ...rest);
+        });
+      }
       if (typeof scroller._getIsHeightsReady === 'function') replace('_getIsHeightsReady', () => true);
     } catch {
       for (const [name, entry] of state.originals) {
@@ -421,7 +454,7 @@ export function initMasonry({ read, write, permalink }) {
       const slice = masonryWindow(layout, Math.max(0, -container.getBoundingClientRect().top), innerHeight);
       const wanted = slice && bridge.items.slice(slice.start, slice.end);
       if (!bridge.items.length || !wanted || wanted.length !== bridge.rendered.length ||
-          wanted.some((item, i) => item !== bridge.rendered[i])) refresh(bridge.scroller);
+          wanted.some((item, i) => item.key !== bridge.rendered[i].key)) refresh(bridge.scroller);
       if (rejected.has(container)) { release(); setStatus(rejected.get(container)); return; }
     }
     viewportDirty = false;
@@ -445,26 +478,90 @@ export function initMasonry({ read, write, permalink }) {
       const item = { key:id ? `post:${id}` : url || Symbol('row'), fullRow:!post };
       return { child, item, id, post:!!post, postCount:posts.length, fullRow:!post };
     });
-    let cells = bridge ? matchMasonryCells(domCells, bridge.items, bridge.rendered) : domCells;
-    const local = !bridge || cells.some((cell) => !cell.item || typeof cell.item.key === 'symbol');
-    if (local && bridge) warn('Using estimated geometry and local card layout; unverified identities do not block masonry.');
-    // Visual placement needs only DOM geometry. Own permalinks are optional
-    // cache keys, never activation requirements or inferred shortcut targets.
-    const ids = new Map();
-    for (const cell of domCells) if (cell.id) ids.set(cell.id, (ids.get(cell.id) || 0) + 1);
-    if (local) cells = domCells.map((cell) => ({ ...cell, item:{
-      key:cell.id && ids.get(cell.id) === 1 ? `post:${cell.id}` : Symbol('unverified card'),
-      fullRow:cell.fullRow,
-    } }));
-    const items = local ? cells.map((cell) => cell.item) : bridge.items;
-    const renderer = local ? visualPlacement : placement;
+    let rendered = bridge?.rendered;
+    const committedOffsets = new Map();
+    // Requested and committed arrays need not coincide. Native state carries
+    // the keys of the actual commit (including normalized envelopes).
+    if (Array.isArray(bridge?.scroller.state?.renderedItems)) {
+      const byId = new Map();
+      for (const item of bridge.items) {
+        const id = item.entry?.itemId ?? item.entry;
+        byId.set(id, byId.has(id) ? null : item);
+      }
+      const committed = bridge.scroller.state.renderedItems.map((entry) => {
+        const item = byId.get(entry?.itemId ?? entry);
+        if (item && Number.isFinite(entry?.offset)) {
+          committedOffsets.set(entry.offset, committedOffsets.has(entry.offset) ? null : item);
+        }
+        return item;
+      });
+      if (committed.every(Boolean)) rendered = committed;
+    }
+    let cells = bridge ? matchMasonryCells(domCells, bridge.items, rendered) : domCells;
+    if (bridge) {
+      // Geometry ownership is not post identity. An opaque native row can still
+      // own its physical slot. Never repack a moving DOM window from zero or
+      // replace every preceding height with the current window's average.
+      const nativeTop = (entry) => typeof entry?.position === 'number' ? entry.position :
+        entry?.position?.top ?? entry?.top ?? entry?.offset;
+      const used = new Set(cells.filter((cell) => cell.item).map((cell) => cell.item.key));
+      cells = cells.map((cell) => {
+        if (cell.item) return cell;
+        const { child } = cell;
+        const signature = `${cell.id || ''}:${child.style.transform}:${child.style.top}`;
+        const previous = cellGeometry.get(child);
+        let item = previous?.signature === signature &&
+          bridge.items.find((item) => item.key === previous.key && !used.has(item.key));
+        const transform = /translate(?:3d|Y)?\(([^)]+)\)/.exec(child.style.transform);
+        const coordinates = transform?.[1].split(',').map((value) => Number.parseFloat(value));
+        const y = coordinates && coordinates.length > 1 ? coordinates[1] : coordinates?.[0];
+        const offset = Number.isFinite(y) ? y : Number.parseFloat(child.style.top);
+        const committed = committedOffsets.get(offset);
+        if (committed && !used.has(committed.key)) item = committed;
+        if (!item && Number.isFinite(offset)) item = rendered.find((item) =>
+          !used.has(item.key) && nativeTop(item.entry) === offset);
+        // Last-resort geometry association for new/opaque shapes. It does not
+        // confer a permalink, saved-post identity or shortcut target.
+        if (!item) item = rendered.find((item) => !used.has(item.key));
+        if (!item) item = { key:previous?.signature === signature ? previous.key : Symbol('extra native cell'),
+          entry:null, height:320 };
+        used.add(item.key);
+        cellGeometry.set(child, { key:item.key, signature, paintedKey:previous?.paintedKey });
+        return { ...cell, item };
+      });
+    }
+    const nativeKeys = new Set(bridge?.items.map((item) => item.key));
+    const items = bridge ? [...bridge.items, ...cells.filter((cell) => !nativeKeys.has(cell.item?.key)).map((cell) => cell.item)] :
+      cells.map((cell) => cell.item);
+    const renderer = placement;
     window.clearTimeout(retryTimer); retryTimer = 0;
     retryContainer = null; retryCount = 0;
     if (!container.classList.contains('xps-masonry-container')) {
       container.classList.add('xps-masonry-container');
       document.dispatchEvent(new Event('xps-masonry-change'));
     }
-    renderer.update(items, width);
+    const provisional = renderer.update(items, width);
+    const mounted = new Map(cells.map((cell) => [cell.item?.key, cell.child]));
+    // A disconnected cold window starts a new packed run. Refining its
+    // unresolved prefix can then translate it, but cannot shear its columns.
+    let anchor = null;
+    const feedTop = container.getBoundingClientRect().top;
+    for (let i = 0; bridge && i < items.length; i++) {
+      const item = items[i];
+      if (!mounted.has(item.key)) continue;
+      if (i && !renderer.hasMeasurement(item.key) && !renderer.hasMeasurement(items[i - 1].key) &&
+          !mounted.has(items[i - 1].key)) renderer.startRun(item.key);
+      // Prefer a surviving painted cell, not a request-time scroll position.
+      const child = mounted.get(item.key);
+      const painted = observed.has(child) && child.style.getPropertyValue('--xps-card-y') !== '' &&
+        cellGeometry.get(child)?.paintedKey === item.key;
+      const screen = (painted ? Number.parseFloat(child.style.getPropertyValue('--xps-card-y')) :
+        provisional.positions[i].top) + feedTop;
+      if (window.scrollY > 0 && feedTop < 0 && screen < innerHeight && screen + provisional.heights[i] > 0 &&
+          (!anchor || painted > anchor.painted || (painted === anchor.painted && Math.abs(screen) < Math.abs(anchor.screen)))) {
+        anchor = { i, screen, painted };
+      }
+    }
     let layoutChanged = false;
     const positionStyle = (node, name, value) => {
       if (node.style.getPropertyValue(name) === value) return;
@@ -482,44 +579,37 @@ export function initMasonry({ read, write, permalink }) {
       clearChild(child);
       observed.delete(child);
     }
-    for (const child of wanted) if (!observed.has(child)) { observed.add(child); resize.observe(child); }
-    const measured = new Map();
+    for (const child of wanted) if (!observed.has(child)) { observed.add(child); resize.observe(child, { box:'border-box' }); }
     cells.forEach(({ child, item, fullRow }) => {
       if (!item) return;
-      const height = Math.ceil(child.getBoundingClientRect().height);
-      measured.set(child, height);
+      const rect = child.getBoundingClientRect();
+      const height = Math.ceil(rect.height);
       if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow);
     });
     const layout = renderer.update(items, width);
-    // Unverified windows have no persistent per-post measurements. Use their
-    // current card-height average to keep native window estimates useful even
-    // when the site's original one-column heights differ greatly at this width.
-    const cardHeights = local && bridge ? cells.filter((cell) => !cell.fullRow)
-      .map(({ child }) => measured.get(child)).filter((height) => height > 0 && Number.isFinite(height)) : [];
-    const estimate = cardHeights.length ? Math.ceil(cardHeights.reduce((sum, height) => sum + height, 0) / cardHeights.length) : null;
-    const estimateChanged = estimate !== null && bridge.estimatedHeight !== estimate;
-    if (estimateChanged) {
-      bridge.estimatedHeight = estimate;
-      bridge.geometryDirty = true;
-    }
-    const geometryChanged = bridge && !local && (layout.positions.length !== bridge.geometry.positions.length ||
-      layout.positions.some((p, i) => p.top !== bridge.geometry.positions[i].top || layout.heights[i] !== bridge.geometry.heights[i]));
-    const offset = local && bridge ? Math.min(...bridge.geometry.positions.slice(bridge.start,
-      bridge.start + bridge.rendered.length).map((p) => p.top), Infinity) : 0;
-    const top = Number.isFinite(offset) ? offset : 0;
+    // Extra placeholders/duplicate DOM cells remain laid out, but cannot expand
+    // the native candidate index space or become native identity owners.
+    const geometry = bridge ? { ...layout, positions:layout.positions.slice(0, bridge.items.length),
+      heights:layout.heights.slice(0, bridge.items.length) } : layout;
+    const geometryChanged = bridge && (geometry.positions.length !== bridge.geometry.positions.length ||
+      geometry.positions.some((p, i) => p.top !== bridge.geometry.positions[i].top || geometry.heights[i] !== bridge.geometry.heights[i]));
     const positions = new Map(items.map((item, i) => [item.key, layout.positions[i]]));
     cells.forEach(({ child, item }) => {
       const position = item && positions.get(item.key);
       if (!position) return;
+      cellGeometry.set(child, { ...cellGeometry.get(child), paintedKey:item.key });
       positionStyle(child, '--xps-card-x', `${position.left}px`);
-      positionStyle(child, '--xps-card-y', `${position.top + top}px`);
+      positionStyle(child, '--xps-card-y', `${position.top}px`);
     });
-    positionStyle(container, '--xps-feed-height', `${Math.max(layout.height + top,
-      local && bridge ? bridge.geometry.height : 0)}px`);
+    positionStyle(container, '--xps-feed-height', `${layout.height}px`);
+    if (anchor) {
+      const error = layout.positions[anchor.i].top + container.getBoundingClientRect().top - anchor.screen;
+      if (Math.abs(error) >= 1) window.scrollBy({ top:error, behavior:'instant' });
+    }
     setStatus('active');
     if (layoutChanged) document.dispatchEvent(new Event('xps-masonry-change'));
-    if (bridge && !local) bridge.geometry = layout;
-    if (geometryChanged || estimateChanged) refresh(bridge.scroller);
+    if (bridge) bridge.geometry = geometry;
+    if (geometryChanged) refresh(bridge.scroller);
     checkNearEnd(container);
   }
 
@@ -540,6 +630,14 @@ export function initMasonry({ read, write, permalink }) {
     if (!timer) timer = window.setTimeout(apply, 60);
   }
   new MutationObserver((records) => {
+    // Reconcile committed native children before their first paint. Never
+    // measure an offscreen request merely because the producer returned it.
+    if (bridge && active && records.some((r) => r.type === 'childList' && r.target === active)) {
+      window.clearTimeout(timer);
+      layoutDirty = true;
+      apply();
+      return;
+    }
     if (records.some((r) => (r.type === 'attributes' && r.target instanceof Element &&
       r.target.closest('[data-testid="primaryColumn"]')) || [...r.addedNodes, ...r.removedNodes].some((n) =>
       n instanceof Element && !n.closest('#xps-masonry-keys, #xps-panel, .xps-save-btn, .xps-fact-btn') &&

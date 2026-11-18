@@ -116,12 +116,53 @@ describe('identity-stable masonry placement', () => {
     expect(masonryEntry({ id:NaN })).toBeNull();
     expect(masonryEntry({ id:'tweet-12', position:{ top:100 } })).toMatchObject({ key:'post:12', post:'12' });
   });
+  it('retains resolved loaded-list geometry after measurement LRU eviction without restarting prefix resolution', () => {
+    const state = createMasonryLayout();
+    const entries = Array.from({ length:2200 }, (_, i) => ({ key:`slot-${i}`, height:600 }));
+    state.update(entries, 1374);
+    entries.forEach((item) => state.measure(item.key, 200, 1374, false));
+    const measured = state.update(entries, 1374);
+    expect(state.size()).toEqual({ placements:2200, measurements:2000 });
+    expect(state.hasMeasurement(entries[0].key)).toBe(false);
+    // The first 200 never committed a measurement before eviction. Once a
+    // bounded window commits, its physical geometry survives cache eviction.
+    const prefix = createMasonryLayout();
+    prefix.update(entries, 1374);
+    for (let start = 0; start < entries.length; start += 100) {
+      entries.slice(start, start + 100).forEach((item) => prefix.measure(item.key, 200, 1374, false));
+      prefix.update(entries, 1374);
+    }
+    expect(prefix.hasMeasurement(entries[0].key)).toBe(true);
+    expect(prefix.update(entries, 1374).heights.every((height) => height === 200)).toBe(true);
+    expect(measured.heights.slice(200).every((height) => height === 200)).toBe(true);
+  });
   it('recognizes wrapper and primitive list keys without treating coordinates as identity', () => {
     expect(masonryEntry({ item:{ renderData:true }, entryId:'tweet-12', position:{ top:100, bottom:200 } }))
       .toMatchObject({ key:'post:12', post:'12' });
     expect(masonryEntry({ item:'tweet-12', position:{ top:100 } })).toMatchObject({ key:'post:12', post:'12' });
     expect(masonryEntry({ item:{ id:'', entryId:'tweet-12' }, position:null })).toMatchObject({ key:'post:12', post:'12' });
     expect(masonryEntry({ item:{ renderData:true }, position:{ top:100 } })).toBeNull();
+    expect(masonryEntry({ itemId:'timeline-row-12', offset:900, visible:false, height:600 }))
+      .toMatchObject({ key:'entry:timeline-row-12', post:undefined, height:600 });
+  });
+  it('translates a disconnected measured run without shearing its columns as its prefix resolves', () => {
+    const state = createMasonryLayout();
+    const entries = ['u', 'v', 'a', 'b', 'c', 'd'].map((key) => ({ key, height:600 }));
+    state.update(entries, 652);
+    state.startRun('a');
+    for (const [i, item] of entries.slice(2).entries()) state.measure(item.key, 100 + 30 * i, 652, false);
+    const before = state.update(entries, 652);
+    state.measure('u', 60, 652, false);
+    state.measure('v', 200, 652, false);
+    const after = state.update(entries, 652);
+    expect(after.positions[0].top).toBe(0);
+    for (let i = 2; i < entries.length; i++) {
+      expect(after.positions[i].left).toBe(before.positions[i].left);
+      expect(after.positions[i].top - before.positions[i].top).toBe(-400);
+    }
+    expect(state.hasMeasurement('a')).toBe(true);
+    state.update(entries, 690);
+    expect(state.hasMeasurement('a')).toBe(false);
   });
   it('covers nonmonotonic per-column positions with a bounded contiguous native window', () => {
     const layout = { positions:[{ top:1000 }, { top:0 }, { top:1100 }, { top:100 }], heights:[200, 200, 200, 200] };
