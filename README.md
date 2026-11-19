@@ -1,200 +1,89 @@
 # X Post Saver (Enhanced)
 
-X Post Saver is a userscript for saving posts on X.com locally and exporting them as JSONL.
+Save X posts in your browser, export them as JSONL or a list of URLs, and browse
+supported timelines in a responsive masonry layout.
 
-## Demo
+**[Install X Post Saver 0.6.4](https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js)** · [Changelog](CHANGELOG.md)
 
-[Watch the demo video](demo.mp4)
+## Quick start
 
-## Repository Components
+1. Install a userscript manager such as [Tampermonkey](https://www.tampermonkey.net/)
+   (recommended), [Violentmonkey](https://violentmonkey.github.io/), or
+   [Greasemonkey](https://www.greasespot.net/). Open the install link above and
+   confirm in your manager. Masonry is built in; disable or remove the separate
+   X.com Masonry View script if you have it.
+2. Open X.com and click **Save** on a post to keep it. Click **Saved** to remove
+   it from your local list.
+3. Open the floating bookmark circle. **Export (N)** downloads a
+   [JSONL file](#jsonl-format) and **Copy** copies the same data. For just the
+   post links, use **Export URLs** or **Copy URLs**. **Clear** removes all saves
+   after confirmation.
 
-- `x-post-saver-enhanced.user.js`: production userscript you install in Tampermonkey/Violentmonkey/Greasemonkey.
-- `src/`: userscript source code.
+Drag the circle or the expanded panel’s six-dot grip to move it. The panel
+remembers its position and starts collapsed on each page load.
 
-The [retired Rust converter](https://github.com/lsj5031/XPostSaver/tree/0b54011498e965f5606869153f400b8fcb093425/tools/xps-render-rs) remains available in Git history.
+**Masonry preview:** The X feed in five columns with **Cols: 5** selected.
 
-## Userscript Features
+![Five columns of posts in the X feed, with shortcut badges and Cols: 5 selected in the expanded panel](assets/masonry-preview.jpg)
 
-### Save and Manage Posts on X
+## Masonry
 
-- Injects a `Save`/`Saved` button into each post action bar.
-- Supports save and unsave in place.
-- Uses post-key dedupe (post `id` first, URL normalization fallback) to prevent duplicates.
-- Scans dynamic timeline updates with `MutationObserver` and incremental rescans.
-- Use userscript-owned unmodified **j/k** navigation (next/previous) to focus a post, then **w** to open it in a new background tab (**x** remains X’s native Block action), **v** to toggle Save/Saved, or **c** to run 核查, which **automatically sends the post’s fact-check prompt to Grok Auto**. Save and fact-check use the existing enabled buttons, including the longform top bar. Focus must be on the post, a descendant, or its single-post timeline cell; hovering alone does not select a post. Editors, unrelated dialogs, repeated/composing keys, extra modifier keys, and absent/disabled action buttons are ignored. All three shortcuts require no modifiers. Native **x**, Enter, and Shift+Enter pass through to X. **Space** smoothly scrolls down one viewport even after clicking a button; **Shift+Space** scrolls up. Holding Space does not restart the animation. Typing fields, dialogs, and media controls keep their normal Space behavior, and reduced-motion preferences are respected.
-- **j/k** move from the actually focused post only while it intersects the usable timeline viewport. After manual scrolling or Space leaves focus offscreen, **j** anchors to the first visible post and **k** to the last, rather than jumping back to a stale selection. Tall intersecting posts count as visible; nested quotes/read views are not separate targets. Navigation uses the primary timeline when identifiable, accounts for its sticky header, focuses the real article without incidental scrolling, and reveals an offscreen next/previous target deliberately. Held repeats are consumed without traversal; boundaries with visible posts are consumed to prevent native stale-selection jumps. With no visible actionable posts, the key passes through. Editors, dialogs, media controls, modifiers (including Shift), and composition keep native behavior. This is a viewport-aware userscript policy, not a claim about X internals: [X documents j/k as next/previous](https://help.x.com/en/using-x/how-to-post), without promising viewport reanchoring.
-- Background opening requires your userscript manager’s `GM_openInTab` API and grant. Missing permissions or opening failures show an error, with no focus-stealing `window.open` fallback. Shortcuts are covered by DOM fixtures and bundle tests, not verified against live X; tests use the local fallback when Grok is absent and do not send network requests.
+**Masonry: On** is the default. In the expanded bookmark panel, choose
+**Masonry: Off** to return to X’s native layout. **Cols: Auto** chooses a
+column count from the available feed width. Choose a maximum of **1–6** to cap
+it: a narrower feed can still use fewer columns, and **1** caps it at one.
+Both settings apply without reloading and are remembered independently.
 
-### Per-post Grok Auto Fact-check (v0.5.1)
+With masonry active in landscape windows at least 1,000 px wide, the feed
+uses the available width and **☰** opens X’s navigation drawer. Post detail
+pages, windows under 700 px, and unsupported feeds keep X’s native layout
+even if the setting is On. If a timeline misbehaves, switch Masonry off.
+The browser fixtures model X offline, not a live account or every
+browser/userscript-manager combination. X UI changes can affect compatibility.
+See the [third-party notices](THIRD_PARTY_NOTICES.md) for masonry attribution.
 
-Firefox paste compatibility was fixed in v0.5.4: Firefox ignores the synthetic paste constructor’s `clipboardData` option, so the script supplies the populated data on that event when needed. This uses one paste event and does not access the system clipboard. Verified with local Firefox and Chromium composer fixtures; live X integration remains unverified.
+## Keyboard shortcuts
 
-- Click **核查** beside Save, including the top action bar of a longform article, to **automatically send that selected post to Grok in Auto mode**. This is a manual action per post; no background checks run.
-- Uses the currently loaded post text, source URL, and one level of quoted context to prepare a Chinese fact-check prompt. It does not expand Show more, fetch missing threads/media, or save/unsave the post.
-- Opens X's native **Grok** navigation in the same tab, fills an empty composer, selects and verifies **Auto**, and finds the nearest ancestor containing exactly one editor, mode button, and Send button, and clicks its unique visible, enabled native **Send** button once. It rechecks cancellation, navigation, the composer, exact prompt, mode, and Send control immediately before clicking. There is no retry, queue, xAI API, or private endpoint access.
-- Requires a logged-in X account with access to Grok. Before-send failures (native UI changes, unavailable navigation, a nonempty draft, mode verification failure, or timeout) stop submission and leave a visible prompt with **复制提示词**. Existing Grok drafts are never replaced or sent. The explicit copy button can change the clipboard; clipboard failure leaves the prompt selected for ⌘C / Ctrl+C. Check the current conversation and draft before any manual fallback.
-- Cancel/close or Escape stops work before Send; after the click it cannot undo submission. An inserted draft is left intact when work stops. Multiline text is inserted with a single native DataTransfer paste event, without reading or changing the system clipboard. Composer detection is bounded to 8 seconds, with up to 2 seconds each for paste verification, composer control detection, mode button availability, Auto menu/selection verification, and Send availability.
-- Success requires a cleared composer and a newly visible copy of the exact prompt in native conversation content within 8 seconds after the click. Missing acknowledgement, navigation, cancellation, or an error after the click reports **uncertain send outcome**, never retries, and asks you to check Grok without resending. A send attempt blocks another check of that post for the current page session, including when its result is uncertain. This is a UI acknowledgement, not proof that Grok completed a response; no results are archived.
-- Open **核查设置** in the floating panel to edit the prompt template, **恢复默认** to restore the Chinese default, then **保存设置**. {url}, {text}, and {quoted} insert the corresponding data; omitted fields are appended so source context is retained. Settings use the separate local key xpsFactCheckTemplate.
-- The default asks for Chinese explanations, important factual claims, original evidence with source links, supported/refuted/unconfirmed conclusions, and explicit reading limitations. Post and quote content are treated as source material, not instructions.
+| Key | Action |
+| --- | --- |
+| **j** / **k** | Focus the next / previous post. If no post is focused on screen, start at the first / last visible post. |
+| **w** | Open the focused post in a background tab. |
+| **v** | Toggle **Save** / **Saved** on the focused post. |
+| **c** | Run **核查** on the focused post and automatically send its prompt to Grok Auto. |
+| **1–9**, **0**, then **d/e/q/y/z** | Press the badge shown on a visible masonry card to open that post in a background tab without moving focus. |
+| **Space** / **Shift+Space** | Scroll down / up one viewport. |
 
-### Rich Extraction
+Hovering alone does not focus a post. Badges appear only on eligible visible
+cards with a verified link to the post itself. Unassigned badge keys and X’s
+native **x** (Block) pass through. Shortcuts leave typing fields, dialogs, and
+media controls alone. Background tabs require the userscript manager’s
+`GM_openInTab` permission; there is no foreground fallback.
 
-For each saved post, extracts:
+## Optional: fact-check with Grok
 
-- `id`, `url`, `author`, `handle`, `text`, `date`, `saved_at`
-- External links (`links`) with X/Twitter domains excluded
-- Media (`media`) including:
-  - photos (normalized to original-size image URLs when possible)
-  - video poster/thumb URLs
-  - direct video source URLs (excluding blob URLs)
-- Quoted post (`quoted`) as one nested level with its own fields (`url/author/handle/text/date/links/media`)
+Click **核查** (fact-check) beside **Save**, or press **c** on a focused post,
+to **automatically send** a prompt to Grok in Auto mode through X’s own UI.
+This is opt-in per post and requires a signed-in X account with Grok access.
+The prompt includes the post URL, currently loaded text, and one level of
+quoted context. Use **核查设置** in the panel to edit the default Chinese
+prompt template.
 
-Extraction behavior details:
+If handoff stops before sending, use **复制提示词** to copy the prompt. The
+script won’t replace or send an existing draft. If the send outcome is
+uncertain, check the Grok conversation before sending anything again; the
+script does not retry or archive Grok responses.
 
-- Expands `Show more` when present to capture full text.
-- Supports longform article layouts (`twitterArticleRichTextView` / longform components).
-- Canonicalizes status URLs (`/user/status/:id`, `/i/web/status/:id`, `/status/:id`) for stable comparison.
+## Local storage and privacy
 
-### Storage and Sync
+Saved posts and preferences stay in your browser’s userscript storage, with
+local browser storage as a fallback. Saving and exporting do not use an
+external API. Exports include post text and available links, media URLs
+(not media files), and one level of quoted-post data. The script warns at
+1,800 saves and blocks new saves at 2,000; export a backup before clearing.
 
-- Primary storage key: `xSavedPosts`.
-- Uses userscript storage APIs (`GM_getValue`/`GM_setValue`) when available.
-- Falls back to `localStorage` if GM APIs are unavailable.
-- Migrates legacy `localStorage` data to GM storage when possible.
-- Cross-tab refresh signal key: `xpsSync`.
-- Soft limit/warnings:
-  - warning toast at `1800` saved posts
-  - save blocked at `2000` saved posts
-
-### Export and UI
-
-- Floating panel starts as a small bookmark circle on every page load. Click it
-  (or focus it and press Enter/Space) to expand; the **−** button collapses it
-  and keeps focus on the toggle. Hidden controls are not in the tab order.
-  Drag the circle without opening it, or drag the expanded grip, to save the
-  panel position across page loads. Arrow keys move either focused handle.
-  Small click jitter still opens the circle; dragging does not.
-  Expansion and viewport resizing keep it onscreen, including narrow layouts.
-  Saved posts and fact-check settings are unchanged by opening/closing the panel.
-- Expanded controls:
-  - `Export (N)`: downloads `x-saved-posts-YYYY-MM-DD.jsonl`
-  - `Copy`: copies JSONL to clipboard
-  - `Export URLs` / `Copy URLs`: exports or copies saved post URLs
-  - `Clear`: clears all saved posts after confirmation
-  - `核查设置`: edits the fact-check prompt template
-- Toast notifications for success/error states.
-
-### Standalone masonry and compact navigation (v0.5.13)
-
-Install **ONE script, X Post Saver**. Masonry is built in and **on by default**.
-Remove the separate X.com Masonry View script; reinstalling it is not required.
-The expanded bookmark panel has a **Masonry: On/Off** recovery control. Its
-separate `xpsMasonryEnabled` setting does not replace saved posts or settings.
-Beside it, **Cols: Auto** uses the available feed width to choose the number of
-columns. Select **1–6** to set a maximum; narrower feeds still use fewer
-columns. The change applies without reloading and is saved separately from
-Masonry On/Off.
-The control stays simply **Masonry: On** or **Masonry: Off**. On means requested;
-optional consistency diagnostics never block usable layout. Bridge/capability
-warnings and estimated-layout notices stay in the console, deduplicated and
-limited to eight messages per page session, not in the normal control.
-Missing React hydration gets a finite retry burst, then waits for feed changes,
-scroll, resize or navigation; toggling Off/On also retries. Unknown virtualizers
-remain native single-column, without forced CSS or unbounded rendered posts.
-Version .17 restores .13's permissive native renderer bridge: raw entries and
-coordinate objects pass through unchanged. Missing own permalinks, unknown or
-conflicting candidate IDs, reordered placeholders and delayed commits do not
-block visual layout. Unverified windows use estimated native geometry and pack
-the actual DOM cards locally, without caching measurements by guessed identity.
-Own permalinks are not required for layout. Only verified visible posts receive
-shortcut badges; no URL is guessed.
-Newly placed posts choose the shortest column, with approximately 320px minimum
-widths. Once placed, a post keeps its column for the current feed and column
-count when their identities are known. Unverified cards/windows may lose that
-sticky-column guarantee. Delayed image/quote growth moves downstream cards **within that column**,
-without repacking existing posts across columns or fixing/clipping their heights.
-Insertion, reorder and virtualized DOM replacement use own-post identities, not
-recycled indexes. Changing the number of columns or the feed route legitimately
-starts a new placement. Below 700px and on status/detail pages, layout is native.
-
-The relevant layout/scroller logic is adapted from MIT X.com Masonry View 1.7.7,
-not its network blocking, feed GC, global scheduling or media-resource hacks.
-See [third-party notice](THIRD_PARTY_NOTICES.md). No remote runtime code is loaded.
-The `unsafeWindow` grant accesses only the active timeline's React-scroller
-capabilities through the userscript manager, without inline CSP injection.
-Instance hooks are restored on route/disable/container replacement. Unsupported
-absolute virtualizers remain native instead of freezing their navigation.
-Rendering is windowed to at most 120 virtual items. Native candidate coordinates
-remain untouched; CSS placement and bounded slice selection use independent
-geometry. Unverified windows use a current measured card-height average for
-offscreen estimates. Replacing estimates can shift vertical positions.
-Known verified identities retain committed column assignments. Measurement history
-is capped at 2000 identities; small column records are retained only for the
-current native loaded list and pruned on removal, never for historical DOM.
-Only missing renderer capabilities, an unavailable native entry array or an extreme layout that
-cannot cover visible cards in one bounded native window require native fallback,
-not ambiguous/missing post identities.
-Native quotes are neither moved nor reconstructed.
-
-When a connected masonry timeline is active, landscape windows
-at least 1000px wide give the **entire available width to the feed**, with zero
-sidebar reservation. A floating **☰** button (44px target, no letter shortcut)
-opens the original navigation in a 280px scrollable overlay without moving the
-feed. Click, Enter, or Space opens it and focuses its first native link. The
-closed drawer is hidden and inert, with no hidden keyboard stops. Original links,
-unread badges, compose, account, and More controls remain intact. Escape closes
-the drawer and returns focus to the toggle; clicking outside closes it without
-stealing focus from another control. Native menus keep their interaction and
-first Escape. Width caps and margins on the feed's nested wrappers are removed;
-the built-in engine owns masonry placement and responsive column counts.
-
-Without active masonry, in portrait/narrow windows, or after timeline/header
-replacement, native navigation is restored or re-detected automatically. Both
-external-script load orders are supported cheaply when its engine is already
-active, without a second layout/scroller hook. Saved posts, settings, and the draggable
-bookmark panel are unaffected. Verified with offline native-shaped DOM/layout
-fixtures, **not a live logged-in X account**; future X/upstream DOM changes may
-require compatibility updates.
-
-### Open a visible masonry post
-
-Press the **single key shown on the card** to open that post in a background
-tab without moving focus. Badges use **1–0**, then **d/e/q/y/z**, for up to
-15 visible posts. A card keeps its key while it stays eligible. Nested quotes,
-covered posts and cards without a verified own timestamp link are not targets.
-Unassigned keys pass through; editors, media controls, dialogs, the navigation
-drawer and native `g`/`a` sequences keep their keys. **j/k**, then **w**, still
-works for a focused post, as do **v/c** and **Space**.
-Scroll-only masonry work reuses cached geometry; actual card growth, feed width
-and list changes still update layout and native loading.
-
-Quote presentation is left to X's native content. Content
-shown as two visually linked cards stays in two cards; this integration does
-not restore, merge, move, or restyle quotes. Own-post keyboard targets exclude
-native inline quote timestamps as well as nested quote articles. A quoted
-permalink is never substituted for the enclosing post's own shortcut target.
-
-## Installation
-
-Current userscript release: **0.5.18**. See [changelog](CHANGELOG.md).
-
-1. Install a userscript manager:
-   - [Tampermonkey](https://www.tampermonkey.net/) (recommended)
-   - [Violentmonkey](https://violentmonkey.github.io/)
-   - [Greasemonkey](https://www.greasespot.net/)
-2. Install `x-post-saver-enhanced.user.js` in your userscript manager.
-   This is the only userscript needed, including masonry. Remove the former
-   separate masonry script if installed.
-
-## Usage
-
-1. Open X.com.
-2. Click `Save` on posts you want to keep.
-3. Click the floating bookmark circle to expand the panel (drag it to move without opening):
-   - `Export` to JSONL
-   - `Copy` to clipboard
-   - `Clear` to remove all saves
+No Grok requests run in the background. If the prompt is sent, X/Grok
+processes it under your account and its policies. The automatic handoff
+does not use the system clipboard; the fallback copy button does.
 
 ## JSONL Format
 
@@ -221,146 +110,37 @@ Top-level fields:
 
 ## Development
 
-- Install JavaScript development dependencies:
-
 ```bash
 npm ci
+node scripts/build.js  # rebuild the userscript from src/
+npm run build:check    # verify the checked-in bundle
+npm run check          # lint, type-check, and test
 ```
 
-- Build bundled userscript:
+To regenerate the embedded font CSS, run `npm run build` with `pyftsubset`
+(FontTools with Brotli support), then run `node scripts/build.js` to rebuild
+the bundle with the third-party notices.
+
+Optional offline Chromium fixtures use local Playwright and Chromium.
+Set `XPS_EVIDENCE` to direct screenshots and measurements to a directory.
 
 ```bash
-npm run build
-```
+export XPS_PLAYWRIGHT="/absolute/path/to/playwright-core/index.js"
+export XPS_CHROMIUM="/absolute/path/to/chromium"
 
-- Verify the checked-in bundle matches the source:
-
-```bash
-npm run build:check
-```
-
-- The build also (re)generates `src/main.css` by subsetting the Ioskeley
-  Mono faces (see `scripts/gen-fonts.js`), which requires `pyftsubset`
-  (fonttools). If it is not on `PATH`, create a virtualenv and install it:
-
-```bash
-python3 -m venv .fonttools-venv
-./.fonttools-venv/bin/pip install fonttools brotli
-```
-
-- Run JS tests:
-
-```bash
-npm test
-```
-
-- Optional real Chromium shortcut fixture (no live X access or external requests):
-
-```bash
-XPS_PLAYWRIGHT="/absolute/path/to/playwright-core/index.js" \
-XPS_CHROMIUM="/absolute/path/to/chromium" \
-node scripts/check-navigation-browser.js
-```
-
-  Requires `XPS_PLAYWRIGHT` (absolute module path) and `XPS_CHROMIUM` (absolute
-  executable path) for locally installed tools; no dependencies are added.
-  Replace the placeholders above with your local paths. `XPS_EVIDENCE` sets the output directory
-  (default `/tmp/xps-jk-evidence`) for ordered screenshots, trace, and measurements.
-  Its stale native-navigation handler is an explicit simulation, not verified X internals.
-
-- Optional offline Chromium panel fixture, using the same local tool environment:
-
-```bash
-XPS_PLAYWRIGHT="/absolute/path/to/playwright-core/index.js" \
-XPS_CHROMIUM="/absolute/path/to/chromium" \
 node scripts/check-panel-browser.js
-```
-
-  Tests source and bundle on desktop/narrow viewports, native Enter/Space toggle,
-  copy/count, drag/reload, stored edge positions and resize clamping.
-  `XPS_EVIDENCE` defaults to `/tmp/xps-circle-evidence` for ordered screenshots,
-  a side-by-side preview and measurements. All network requests are blocked.
-
-- Standalone offline Chromium acceptance gate, using those same local tools:
-
-```bash
+node scripts/check-navigation-browser.js
+node scripts/check-masonry-columns-browser.js
 node scripts/check-standalone-masonry-browser.js
 node scripts/check-masonry-activation-browser.js
+node scripts/check-masonry-geometry-browser.js
 node scripts/check-masonry-scroll-browser.js
-node scripts/check-masonry-columns-browser.js
-```
-
-  Injects only source or the shipped XPostSaver bundle into a native one-column,
-  absolute/transformed synthetic virtual list. No external script, CSS or
-  `.xopt` class is supplied. Measures unequal-height columns, full width at
-  1000/1440/1920/2560, intact nested quotes, non-overlap, single-key opens,
-  native drawer controls, delayed media, item/container replacement,
-  synthetic load-more, bounded rendered DOM, detail/back and toggle restoration,
-  delayed mount and unsupported-scroller fallback. Evidence is written to
-  `XPS_EVIDENCE` (default `/tmp/xps-standalone-evidence`).
-  This does **not** validate live X pagination or a real userscript sandbox.
-  The columns check compares measured Auto and capped card layouts in both
-  ordinary flow and a modeled native scroller. It exercises keyboard focus,
-  responsive narrowing, reloaded preferences, and changed native render demand.
-  Screenshots and measurements go to `XPS_EVIDENCE` (default `/tmp/xps-columns-evidence`).
-  The scroll check uses 360 loaded posts, a 1440×900 viewport and a deterministic
-  wheel/stop/start workload for source and bundle. It records callback time/counts,
-  layout reads, style/DOM mutations, frame/key logs, screenshots and browser traces
-  in `XPS_EVIDENCE` (default `/tmp/xps-scroll-evidence`). It checks unchanged-scroll
-  work, delayed growth, recycled links, bounded loading, detail/back and shortcut
-  behavior with j/w retained. Timing is synthetic evidence, not physical smoothness.
-  `--baseline` labels only a pre-repair .17 checkout and refuses a newer bundle.
-  The activation gate separately checks same-container late hydration, finite
-  retry exhaustion/event recovery, distinct page-world expando access, native
-  callback discovery, route/replacement restoration and unknown-entry fallback
-  against source and bundle. These are modeled boundaries, not a manager test.
-  `node scripts/check-masonry-activation-browser.js --compare-releases` additionally
-  reads the exact .13/.14 bundles from local Git history and verifies modeled
-  last-commit regressions (not captured live shapes), bounded scroll coverage,
-  untouched structured native coordinates, optional loading identities and
-  delayed-commit recovery.
-
-- Optional external-layout compatibility/navigation fixture, using those same local
-  tool environment variables:
-
-```bash
 node scripts/check-masonry-browser.js
+node scripts/check-masonry-quotes-browser.js --standalone
 ```
-
-  Tests source and shipped bundle, both script load orders,
-  nested navigation/feed wrappers, original controls, inert
-  keyboard traversal, drawer toggling, viewport restoration, and SPA replacement.
-  Verifies unassigned keys pass through, retained w/v/c and j/k commands,
-  paging, detail/back and external-layout compatibility.
-  `XPS_EVIDENCE` defaults to `/tmp/xps-masonry-sidebar-evidence`; its `v2/`
-  directory contains source/bundle screenshots and `masonry-measurements.json`.
-  The fixture models upstream 1.7.7 layout rules; it never executes upstream
-  network/React patches or uses a live account. At widths 1000, 1280, 1440,
-  1920, and 2560 it verifies zero navigation reservation and full-width feed/
-  masonry containers, with no horizontal overflow or column-count changes.
-
-- Optional whole-upstream quote compatibility gate, using the same local browser
-  variables and an independently supplied local upstream userscript:
-
-```bash
-XPS_MASONRY_UPSTREAM="/absolute/path/to/masonry.user.js" \
-node scripts/check-masonry-quotes-browser.js
-```
-
-  Runs the complete external script unchanged in fresh, network-blocked offline
-  contexts, with source/bundle and both load orders. Tests inline and nested
-  quotes, media/delayed height changes, original linked-card node preservation,
-  no clipping/overlap, outer action-bar ownership, quote link reachability and
-  focused own-post w targets. Evidence is under `XPS_EVIDENCE/v3-quotes/final/`.
-  The linked-card fixture is synthetic, not a captured live-X representation;
-  no React-derived quote navigation, video decoding, or live account is tested.
-
-## Privacy
-
-- No external API calls are required for saving/exporting posts.
-- Saved posts and prompt settings are stored locally in browser storage.
-- Clicking 核查 authorizes automatically sending the selected post’s fact-check prompt through X’s native Grok UI in Auto mode. X/Grok processes it under your account and its policies. Automatic handoff does not access the system clipboard or any API; the fallback copy button changes the clipboard only when clicked.
 
 ## License
 
 Provided as-is for personal use.
+
+The [retired Rust converter](https://github.com/lsj5031/XPostSaver/tree/0b54011498e965f5606869153f400b8fcb093425/tools/xps-render-rs) remains available in Git history.
