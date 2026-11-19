@@ -9,7 +9,7 @@ let window;
 afterEach(() => window?.close());
 
 describe.each([['source', source], ['generated userscript', bundle]])('%s floating panel', (_name, code) => {
-  function setup(masonryEnabled = null) {
+  function setup(masonryEnabled = null, maximumColumns = null) {
     window = new JSDOM('<main>Offline fixture</main>', { url: 'https://x.com/home', runScripts: 'outside-only' }).window;
     const storage = new Map([
       ['xSavedPosts', JSON.stringify([{ id: '123', url: 'https://x.com/person/status/123', text: 'Saved fixture' }])],
@@ -17,6 +17,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
       ['xpsPanelPosition', '{"x":120,"y":80}'],
     ]);
     if (masonryEnabled !== null) storage.set('xpsMasonryEnabled', masonryEnabled);
+    if (maximumColumns !== null) storage.set('xpsMasonryMaxColumns', maximumColumns);
     window.GM_getValue = (key) => storage.get(key);
     window.GM_setValue = vi.fn((key, value) => storage.set(key, value));
     window.scrollBy = vi.fn();
@@ -26,7 +27,7 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     const panel = window.document.querySelector('#xps-panel');
     const toggle = panel.querySelector('.xps-panel-toggle');
     const controls = [...panel.querySelectorAll('button:not(.xps-panel-toggle)')];
-    return { storage, panel, toggle, controls, writeText };
+    return { storage, panel, toggle, controls, columns: panel.querySelector('select'), writeText };
   }
 
   it('starts collapsed, exposes working actions only when expanded, and preserves stored data', async () => {
@@ -69,6 +70,44 @@ describe.each([['source', source], ['generated userscript', bundle]])('%s floati
     expect(storage.get('xpsMasonryEnabled')).toBe(false);
     expect(storage.get('xSavedPosts')).toBe(saved);
     expect(storage.get('xpsFactCheckTemplate')).toBe(template);
+  });
+
+  it('exposes the stored column limit and saves real selections independently of on/off', () => {
+    const { storage, toggle, controls, columns } = setup(false, '6');
+    expect(columns.getAttribute('aria-label')).toBe('Maximum masonry columns');
+    expect(columns.previousElementSibling).toBe(controls.at(-1));
+    expect(columns.hidden).toBe(true);
+    expect(columns.value).toBe('6');
+    toggle.click();
+    expect(columns.hidden).toBe(false);
+    expect([...columns.options].map((option) => option.value)).toEqual(['Auto', '1', '2', '3', '4', '5', '6']);
+    const select = (value) => {
+      columns.value = value;
+      columns.dispatchEvent(new window.Event('change', { bubbles: true }));
+    };
+    select('2');
+    expect(window.GM_setValue.mock.calls).toEqual([['xpsMasonryMaxColumns', 2]]);
+    expect(storage.get('xpsMasonryEnabled')).toBe(false);
+    controls.at(-1).click();
+    expect(columns.value).toBe('2');
+    expect(storage.get('xpsMasonryMaxColumns')).toBe(2);
+    select('Auto');
+    expect(storage.get('xpsMasonryMaxColumns')).toBe('auto');
+    expect(storage.get('xpsMasonryEnabled')).toBe(true);
+    columns.focus();
+    const space = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    columns.dispatchEvent(space);
+    expect(space.defaultPrevented).toBe(false);
+    expect(window.scrollBy).not.toHaveBeenCalled();
+    toggle.click();
+    expect(columns.hidden).toBe(true);
+    expect(window.document.activeElement).toBe(toggle);
+  });
+
+  it.each([undefined, 'auto', 0, -1, 7, 1.5, '2.0', '02', true, {}])('uses Auto for absent, Auto or invalid storage (%j)', (stored) => {
+    const { columns } = setup(null, stored);
+    expect(columns.value).toBe('Auto');
+    expect(window.GM_setValue).not.toHaveBeenCalled();
   });
 
   it('allows native toggle Space without changing Space paging on other controls', () => {

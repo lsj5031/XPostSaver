@@ -90,6 +90,10 @@ Install **ONE script, X Post Saver**. Masonry is built in and **on by default**.
 Remove the separate X.com Masonry View script; reinstalling it is not required.
 The expanded bookmark panel has a **Masonry: On/Off** recovery control. Its
 separate `xpsMasonryEnabled` setting does not replace saved posts or settings.
+Beside it, **Cols: Auto** uses the available feed width to choose the number of
+columns. Select **1–6** to set a maximum; narrower feeds still use fewer
+columns. The change applies without reloading and is saved separately from
+Masonry On/Off.
 The control stays simply **Masonry: On** or **Masonry: Off**. On means requested;
 optional consistency diagnostics never block usable layout. Bridge/capability
 warnings and estimated-layout notices stay in the console, deduplicated and
@@ -343,6 +347,7 @@ node scripts/check-panel-browser.js
 node scripts/check-standalone-masonry-browser.js
 node scripts/check-masonry-activation-browser.js
 node scripts/check-masonry-scroll-browser.js
+node scripts/check-masonry-columns-browser.js
 ```
 
   Injects only source or the shipped XPostSaver bundle into a native one-column,
@@ -354,6 +359,10 @@ node scripts/check-masonry-scroll-browser.js
   delayed mount and unsupported-scroller fallback. Evidence is written to
   `XPS_EVIDENCE` (default `/tmp/xps-standalone-evidence`).
   This does **not** validate live X pagination or a real userscript sandbox.
+  The columns check compares measured Auto and capped card layouts in both
+  ordinary flow and a modeled native scroller. It exercises keyboard focus,
+  responsive narrowing, reloaded preferences, and changed native render demand.
+  Screenshots and measurements go to `XPS_EVIDENCE` (default `/tmp/xps-columns-evidence`).
   The scroll check uses 360 loaded posts, a 1440×900 viewport and a deterministic
   wheel/stop/start workload for source and bundle. It records callback time/counts,
   layout reads, style/DOM mutations, frame/key logs, screenshots and browser traces

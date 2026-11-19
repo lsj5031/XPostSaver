@@ -36,7 +36,7 @@ import {
 // file — a userscript can only inject a <style> element.
 import uiCss from './main.css';
 import { initMasonryNavigation } from './masonry-navigation.js';
-import { initMasonry } from './masonry.js';
+import { initMasonry, MASONRY_COLUMN_LIMITS } from './masonry.js';
 import { initMasonryHints } from './masonry-hints.js';
 import hintsCss from './masonry-hints.css';
 import { isShortcutControl, isNativeShortcutSequence } from './keyboard.js';
@@ -454,8 +454,7 @@ function ensureStyles() {
       font-family: 'Ioskeley Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     }
 
-    #${UI.panelId} > button:not(.xps-drag-handle) {
-      appearance: none;
+    #${UI.panelId} > :is(button:not(.xps-drag-handle), select) {
       border: 1px solid rgba(255, 255, 255, 0.18);
       background: rgba(0, 0, 0, 0.55);
       color: #fff;
@@ -469,7 +468,17 @@ function ensureStyles() {
       white-space: nowrap;
     }
 
-    #${UI.panelId} > button:not(.xps-drag-handle):hover {
+    #${UI.panelId} > button:not(.xps-drag-handle) {
+      appearance: none;
+    }
+
+    #${UI.panelId} > select {
+      color-scheme: dark;
+      font-family: inherit;
+      padding-inline: 6px;
+    }
+
+    #${UI.panelId} > :is(button:not(.xps-drag-handle), select):hover {
       background: rgba(255, 255, 255, 0.08);
     }
 
@@ -510,7 +519,7 @@ function ensureStyles() {
       user-select: none;
     }
 
-    #${UI.panelId} > button:focus-visible {
+    #${UI.panelId} > :is(button, select):focus-visible {
       outline: 2px solid rgb(29, 155, 240);
       outline-offset: 2px;
     }
@@ -536,7 +545,7 @@ function ensureStyles() {
       }
     }
 
-    @media (max-width: 240px) {
+    @media (max-width: 264px) {
       #${UI.panelId} {
         grid-template-columns: max-content;
       }
@@ -791,6 +800,15 @@ function ensurePanel(masonry) {
   document.addEventListener('xps-masonry-status', labelMasonry);
   masonryToggle.addEventListener('click', () => { masonry.toggle(); labelMasonry(); });
   panel.appendChild(masonryToggle);
+
+  const columns = document.createElement('select');
+  columns.setAttribute('aria-label', 'Maximum masonry columns');
+  for (const value of ['Auto', ...MASONRY_COLUMN_LIMITS]) {
+    columns.add(new Option(`Cols: ${value}`, String(value)));
+  }
+  columns.value = String(masonry.maximumColumns() ?? 'Auto');
+  columns.addEventListener('change', () => masonry.setMaximumColumns(columns.value));
+  panel.appendChild(columns);
 
   const controls = Array.from(panel.children);
   for (const control of controls) {

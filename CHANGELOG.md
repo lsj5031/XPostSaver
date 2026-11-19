@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.4
+
+- Choose Auto or a maximum of 1–6 masonry columns in the expanded panel. The
+  setting applies immediately and is remembered separately from the Masonry toggle.
+
 ## 0.6.3
 
 - Replace the Move panel button’s repeating dots with a compact six-dot grip

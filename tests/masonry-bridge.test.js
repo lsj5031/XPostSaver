@@ -65,8 +65,10 @@ it('exports callable hooks and keeps scroller arguments and results in the page 
 
     // Model the Firefox APIs with actual distinct JS realms, not Gecko's
     // wrappers or Tampermonkey's injection policy.
+    const write = vi.fn();
     const sandbox = {
       window, unsafeWindow:window, document:window.document, location:window.location,
+      write,
       innerWidth:1440, innerHeight:900, getComputedStyle:window.getComputedStyle,
       requestAnimationFrame:window.requestAnimationFrame, cancelAnimationFrame:window.cancelAnimationFrame,
       Event:window.Event, Element:window.Element, MutationObserver:window.MutationObserver,
@@ -82,16 +84,26 @@ it('exports callable hooks and keeps scroller arguments and results in the page 
       },
     };
     const masonry = runInNewContext(`${code}
-      masonry.initMasonry({ read:() => true, write:() => {}, permalink:() => null });
+      masonry.initMasonry({ read:() => true, write, permalink:() => null });
     `, sandbox);
+    const firstWidth = () => container.firstElementChild.style.getPropertyValue('--xps-card-width');
     await vi.waitFor(() => {
       expect(scroller.lastResult?.slice?.end).toBe(2);
       expect(container.classList.contains('xps-masonry-container')).toBe(true);
+      expect(firstWidth()).toBe('351px');
     });
-    expect(anchor.offset).toBe(300);
 
     const retained = scroller._getRenderCandidates;
     expect(retained).not.toBe(original);
+    const result = scroller.lastResult;
+    masonry.setMaximumColumns('1');
+    await vi.waitFor(() => {
+      expect(firstWidth()).toBe('1440px');
+      expect(scroller.lastResult).not.toBe(result);
+    });
+    expect(anchor.offset).toBe(300);
+    expect(scroller._getRenderCandidates).toBe(retained);
+    expect(write.mock.calls).toEqual([['xpsMasonryMaxColumns', 1]]);
     masonry.toggle();
     expect(scroller._getRenderCandidates).toBe(original);
     expect(scroller._updateRenderedItems).toBe(update);

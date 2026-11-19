@@ -59,14 +59,14 @@ async function capture(page, name, expanded) {
       viewport: { width: innerWidth, height: innerHeight },
       expanded: toggle.getAttribute('aria-expanded'), label: toggle.getAttribute('aria-label'),
       focus: document.activeElement.className,
-      visibleControls: [...panel.querySelectorAll('button')].filter((button) => button.getClientRects().length).map((button) => button.getAttribute('aria-label') || button.textContent),
+      visibleControls: [...panel.querySelectorAll('button, select')].filter((control) => control.getClientRects().length).map((control) => control.getAttribute('aria-label') || control.textContent),
       storage: window.fixtureStorage, copies: window.copies, scrollY,
     };
   });
   assert.equal(result.expanded, String(expanded));
   const { bounds: r, viewport: v } = result;
   assert.ok(r.x >= 8 && r.y >= 8 && r.right <= v.width - 7 && r.bottom <= v.height - 7, `${name}: panel within viewport`);
-  assert.equal(result.visibleControls.length, expanded ? 9 : 1);
+  assert.equal(result.visibleControls.length, expanded ? 10 : 1);
   if (!expanded) {
     assert.equal(r.width, 36);
     assert.equal(r.height, 36);
@@ -166,7 +166,7 @@ try {
       // Collapsed controls cannot receive keyboard focus.
       await toggle().focus();
       await page.keyboard.press('Tab');
-      assert.equal(await page.locator('#xps-panel > button:not(.xps-panel-toggle)').evaluateAll((buttons) => buttons.some((button) => button === document.activeElement)), false);
+      assert.equal(await page.locator('#xps-panel > [hidden]').evaluateAll((controls) => controls.some((control) => control === document.activeElement)), false);
       await toggle().click();
       await capture(page, `${prefix}-02-expanded`, true);
       await page.getByRole('button', { name: 'Copy URLs', exact: true }).click();

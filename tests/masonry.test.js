@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { createMasonryLayout, masonryEntry, matchMasonryCells, masonryPositions, masonryWindow, outerPosts } from '../src/masonry.js';
+import { createMasonryLayout, masonryColumnCount, masonryEntry, matchMasonryCells, masonryPositions, masonryWindow, outerPosts } from '../src/masonry.js';
 
 describe('standalone masonry', () => {
+  it('keeps the Auto width thresholds and caps only when a limit is selected', () => {
+    expect([651, 652, 983, 984, 2560].map((width) => masonryColumnCount(width))).toEqual([1, 2, 2, 3, 7]);
+    expect([651, 652, 983, 984, 2560].map((width) => masonryColumnCount(width, 2))).toEqual([1, 2, 2, 2, 2]);
+    expect(masonryColumnCount(2560, 6)).toBe(6);
+  });
   it('packs unequal heights into the shortest column with no empty row cells', () => {
     const result = masonryPositions([100, 250, 80, 90], 2, 652);
     expect(result.positions).toEqual([
@@ -68,6 +73,23 @@ describe('identity-stable masonry placement', () => {
     // Three columns legitimately reassign the fourth card to the shortest third column.
     expect(state.update(entries, 1000).columns).toEqual([0, 1, 2, 2]);
     expect(createMasonryLayout().update(entries, 652).columns).toEqual([0, 1, 0, 0]);
+  });
+  it('reflows at the same feed width and remeasures cards, but not full-width rows', () => {
+    const entries = [...items(), { key:'loader', fullRow:true }], state = measured(entries);
+    state.update(entries, 1000);
+    state.measure('a', 160, 1000, false);
+    state.measure('loader', 20, 1000, true);
+    expect(state.hasMeasurement('a')).toBe(true);
+    const capped = state.update(entries, 1000, 1);
+    expect(capped.columns).toEqual([0, 0, 0, 0]);
+    expect(capped.positions[1]).toEqual({ top:172, left:0, width:1000 });
+    expect(state.hasMeasurement('a')).toBe(false);
+    expect(state.hasMeasurement('loader')).toBe(true);
+    state.measure('a', 120, 1000, false, 1);
+    expect(state.hasMeasurement('a')).toBe(true);
+    expect(state.update(entries, 1000, 1).positions[1].top).toBe(132);
+    expect(state.update(entries, 1000).positions[2]).toEqual({ top:0, left:674.6666666666666, width:325.3333333333333 });
+    expect(state.hasMeasurement('a')).toBe(false);
   });
   it('does not commit unrendered predictions or transfer a removed key to its replacement', () => {
     const entries = items(), state = createMasonryLayout();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.6.3
+// @version      0.6.4
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1054,6 +1054,21 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   // src/masonry.js
   var POST = 'article[role="article"], [data-testid="tweet"]';
   var LIMIT = 120;
+  var MAX_COLUMNS_KEY = "xpsMasonryMaxColumns";
+  var MASONRY_COLUMN_LIMITS = [1, 2, 3, 4, 5, 6];
+  function parseColumnLimit(value) {
+    return MASONRY_COLUMN_LIMITS.find((limit) => value === limit || value === String(limit)) ?? null;
+  }
+  __name(parseColumnLimit, "parseColumnLimit");
+  function masonryColumnCount(width, maximum = null) {
+    const auto = Math.max(1, Math.floor((width + 12) / 332));
+    return maximum === null ? auto : Math.min(auto, maximum);
+  }
+  __name(masonryColumnCount, "masonryColumnCount");
+  function masonryCardWidth(width, columns, gap = 12) {
+    return (width - gap * (columns - 1)) / columns;
+  }
+  __name(masonryCardWidth, "masonryCardWidth");
   function outerPosts(root) {
     return [...root.querySelectorAll(POST)].filter((post) => {
       const owner = post.parentElement?.closest(POST);
@@ -1064,7 +1079,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   function masonryPositions(heights, columns, width, gap = 12, fullRows = /* @__PURE__ */ new Set(), assigned = [], boundaries = /* @__PURE__ */ new Set()) {
     const bottoms = Array(columns).fill(0);
     const placed = [];
-    const cardWidth = (width - gap * (columns - 1)) / columns;
+    const cardWidth = masonryCardWidth(width, columns, gap);
     const positions = heights.map((height, index) => {
       if (boundaries.has(index)) bottoms.fill(Math.max(...bottoms));
       if (fullRows.has(index)) {
@@ -1085,11 +1100,13 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     const placements = /* @__PURE__ */ new Map(), measurements = /* @__PURE__ */ new Map();
     let count = 0, currentWidth = 0;
     return {
-      update(items, width) {
+      update(items, width, columns = masonryColumnCount(width)) {
         currentWidth = width;
-        const columns = Math.max(1, Math.floor((width + 12) / 332));
         if (columns !== count) {
-          for (const placed of placements.values()) placed.column = void 0;
+          for (const placed of placements.values()) {
+            placed.column = void 0;
+            placed.boundary = false;
+          }
           count = columns;
         }
         const wanted = new Set(items.map((item) => item.key));
@@ -1129,19 +1146,24 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         const placed = placements.get(key);
         if (placed) placed.boundary = true;
       },
-      measure(key, height, width, fullRow) {
+      measure(key, height, width, fullRow, columns = masonryColumnCount(width)) {
+        const measuredWidth = fullRow ? width : masonryCardWidth(width, columns);
         const before = measurements.get(key), placed = placements.get(key);
-        const changed = before?.height !== height || before?.width !== width || placed?.fullRow !== fullRow;
+        const changed = before?.height !== height || before?.width !== measuredWidth || placed?.fullRow !== fullRow;
         if (placed && placed.fullRow !== fullRow) {
           placed.fullRow = fullRow;
           placed.column = void 0;
         }
         measurements.delete(key);
-        measurements.set(key, { height, width, fullRow });
+        measurements.set(key, { height, width: measuredWidth, fullRow });
         while (measurements.size > 2e3) measurements.delete(measurements.keys().next().value);
         return changed;
       },
-      hasMeasurement: /* @__PURE__ */ __name((key) => (measurements.get(key)?.width ?? placements.get(key)?.measuredWidth) === currentWidth, "hasMeasurement"),
+      hasMeasurement(key) {
+        const measured = measurements.get(key), placed = placements.get(key);
+        const width = measured?.fullRow ?? placed?.fullRow ? currentWidth : masonryCardWidth(currentWidth, count);
+        return (measured?.width ?? placed?.measuredWidth) === width;
+      },
       size: /* @__PURE__ */ __name(() => ({ placements: placements.size, measurements: measurements.size }), "size")
     };
   }
@@ -1218,6 +1240,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     document.head.append(style);
     const preference = read("xpsMasonryEnabled");
     let enabled2 = preference !== false && preference !== "false";
+    let maximumColumns = parseColumnLimit(read(MAX_COLUMNS_KEY));
     let active = null;
     let bridge = null;
     let timer = 0;
@@ -1438,7 +1461,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         if (!Number.isFinite(width) || width <= 0) return result;
         const dirty = state.geometryDirty || state.width !== width;
         if (dirty) {
-          state.geometry = placement.update(items, width);
+          state.geometry = placement.update(items, width, masonryColumnCount(width, maximumColumns));
           state.width = width;
           state.geometryDirty = false;
         }
@@ -1579,8 +1602,8 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       const width = container.clientWidth;
       containerWidth = width;
       if (!Number.isFinite(width) || width <= 0) return;
-      const columns = Math.max(1, Math.floor((width + 12) / 332));
-      const cardWidth = (width - (columns - 1) * 12) / columns;
+      const columns = masonryColumnCount(width, maximumColumns);
+      const cardWidth = masonryCardWidth(width, columns);
       const domCells = children.map((child) => {
         const posts = child.matches(POST) ? [child] : outerPosts(child);
         const post = posts[0];
@@ -1646,7 +1669,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         container.classList.add("xps-masonry-container");
         document.dispatchEvent(new Event("xps-masonry-change"));
       }
-      const provisional = renderer.update(items, width);
+      const provisional = renderer.update(items, width, columns);
       const mounted = new Map(cells.map((cell) => [cell.item?.key, cell.child]));
       let anchor = null;
       const feedTop = container.getBoundingClientRect().top;
@@ -1686,9 +1709,9 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         if (!item) return;
         const rect = child.getBoundingClientRect();
         const height = Math.ceil(rect.height);
-        if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow);
+        if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow, columns);
       });
-      const layout = renderer.update(items, width);
+      const layout = renderer.update(items, width, columns);
       const geometry = bridge ? {
         ...layout,
         positions: layout.positions.slice(0, bridge.items.length),
@@ -1711,7 +1734,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       setStatus("active");
       if (layoutChanged) document.dispatchEvent(new Event("xps-masonry-change"));
       if (bridge) bridge.geometry = geometry;
-      if (geometryChanged) refresh(bridge.scroller);
+      if (bridge && (geometryChanged || bridge.geometryDirty)) refresh(bridge.scroller);
       checkNearEnd(container);
     }
     __name(apply, "apply");
@@ -1764,6 +1787,19 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
     return {
       enabled: /* @__PURE__ */ __name(() => enabled2, "enabled"),
       status: /* @__PURE__ */ __name(() => status, "status"),
+      maximumColumns: /* @__PURE__ */ __name(() => maximumColumns, "maximumColumns"),
+      setMaximumColumns(value) {
+        const next = parseColumnLimit(value);
+        if (next === maximumColumns) return;
+        const width = active?.clientWidth;
+        const changesLayout = !active || masonryColumnCount(width, next) !== masonryColumnCount(width, maximumColumns);
+        maximumColumns = next;
+        write(MAX_COLUMNS_KEY, next ?? "auto");
+        if (!enabled2 || !changesLayout) return;
+        if (bridge) bridge.geometryDirty = true;
+        if (!active) rejected = /* @__PURE__ */ new WeakMap();
+        wake();
+      },
       toggle() {
         enabled2 = !enabled2;
         write("xpsMasonryEnabled", enabled2);
@@ -2373,8 +2409,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       font-family: 'Ioskeley Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     }
 
-    #${UI.panelId} > button:not(.xps-drag-handle) {
-      appearance: none;
+    #${UI.panelId} > :is(button:not(.xps-drag-handle), select) {
       border: 1px solid rgba(255, 255, 255, 0.18);
       background: rgba(0, 0, 0, 0.55);
       color: #fff;
@@ -2388,7 +2423,17 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       white-space: nowrap;
     }
 
-    #${UI.panelId} > button:not(.xps-drag-handle):hover {
+    #${UI.panelId} > button:not(.xps-drag-handle) {
+      appearance: none;
+    }
+
+    #${UI.panelId} > select {
+      color-scheme: dark;
+      font-family: inherit;
+      padding-inline: 6px;
+    }
+
+    #${UI.panelId} > :is(button:not(.xps-drag-handle), select):hover {
       background: rgba(255, 255, 255, 0.08);
     }
 
@@ -2429,7 +2474,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       user-select: none;
     }
 
-    #${UI.panelId} > button:focus-visible {
+    #${UI.panelId} > :is(button, select):focus-visible {
       outline: 2px solid rgb(29, 155, 240);
       outline-offset: 2px;
     }
@@ -2455,7 +2500,7 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       }
     }
 
-    @media (max-width: 240px) {
+    @media (max-width: 264px) {
       #${UI.panelId} {
         grid-template-columns: max-content;
       }
@@ -2687,6 +2732,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       labelMasonry();
     });
     panel.appendChild(masonryToggle);
+    const columns = document.createElement("select");
+    columns.setAttribute("aria-label", "Maximum masonry columns");
+    for (const value of ["Auto", ...MASONRY_COLUMN_LIMITS]) {
+      columns.add(new Option(`Cols: ${value}`, String(value)));
+    }
+    columns.value = String(masonry.maximumColumns() ?? "Auto");
+    columns.addEventListener("change", () => masonry.setMaximumColumns(columns.value));
+    panel.appendChild(columns);
     const controls2 = Array.from(panel.children);
     for (const control of controls2) {
       if (control instanceof HTMLElement) control.hidden = true;

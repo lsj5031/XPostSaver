@@ -5,6 +5,22 @@ import css from './masonry.css';
 
 const POST = 'article[role="article"], [data-testid="tweet"]';
 const LIMIT = 120;
+const MAX_COLUMNS_KEY = 'xpsMasonryMaxColumns';
+export const MASONRY_COLUMN_LIMITS = [1, 2, 3, 4, 5, 6];
+
+function parseColumnLimit(value) {
+  return MASONRY_COLUMN_LIMITS.find((limit) => value === limit || value === String(limit)) ?? null;
+}
+
+/** @param {number} width @param {number | null} [maximum] */
+export function masonryColumnCount(width, maximum = null) {
+  const auto = Math.max(1, Math.floor((width + 12) / 332));
+  return maximum === null ? auto : Math.min(auto, maximum);
+}
+
+function masonryCardWidth(width, columns, gap = 12) {
+  return (width - gap * (columns - 1)) / columns;
+}
 
 export function outerPosts(root) {
   return [...root.querySelectorAll(POST)].filter((post) => {
@@ -16,7 +32,7 @@ export function outerPosts(root) {
 export function masonryPositions(heights, columns, width, gap = 12, fullRows = new Set(), assigned = [], boundaries = new Set()) {
   const bottoms = Array(columns).fill(0);
   const placed = [];
-  const cardWidth = (width - gap * (columns - 1)) / columns;
+  const cardWidth = masonryCardWidth(width, columns, gap);
   const positions = heights.map((height, index) => {
     if (boundaries.has(index)) bottoms.fill(Math.max(...bottoms));
     if (fullRows.has(index)) {
@@ -41,11 +57,13 @@ export function createMasonryLayout() {
   const placements = new Map(), measurements = new Map();
   let count = 0, currentWidth = 0;
   return {
-    update(items, width) {
+    update(items, width, columns = masonryColumnCount(width)) {
       currentWidth = width;
-      const columns = Math.max(1, Math.floor((width + 12) / 332));
       if (columns !== count) {
-        for (const placed of placements.values()) placed.column = undefined;
+        for (const placed of placements.values()) {
+          placed.column = undefined;
+          placed.boundary = false;
+        }
         count = columns;
       }
       const wanted = new Set(items.map((item) => item.key));
@@ -74,19 +92,26 @@ export function createMasonryLayout() {
       const placed = placements.get(key);
       if (placed) placed.boundary = true;
     },
-    measure(key, height, width, fullRow) {
+    measure(key, height, width, fullRow, columns = masonryColumnCount(width)) {
+      const measuredWidth = fullRow ? width : masonryCardWidth(width, columns);
       const before = measurements.get(key), placed = placements.get(key);
-      const changed = before?.height !== height || before?.width !== width || placed?.fullRow !== fullRow;
+      const changed = before?.height !== height || before?.width !== measuredWidth || placed?.fullRow !== fullRow;
       if (placed && placed.fullRow !== fullRow) {
         placed.fullRow = fullRow;
         placed.column = undefined;
       }
       measurements.delete(key);
-      measurements.set(key, { height, width, fullRow });
+      measurements.set(key, { height, width:measuredWidth, fullRow });
       while (measurements.size > 2000) measurements.delete(measurements.keys().next().value);
       return changed;
     },
-    hasMeasurement: (key) => (measurements.get(key)?.width ?? placements.get(key)?.measuredWidth) === currentWidth,
+    hasMeasurement(key) {
+      const measured = measurements.get(key), placed = placements.get(key);
+      // Old heights remain useful estimates, but are not current measurements
+      // when a cap changes card width without changing the feed width.
+      const width = (measured?.fullRow ?? placed?.fullRow) ? currentWidth : masonryCardWidth(currentWidth, count);
+      return (measured?.width ?? placed?.measuredWidth) === width;
+    },
     size: () => ({ placements:placements.size, measurements:measurements.size }),
   };
 }
@@ -160,6 +185,7 @@ export function initMasonry({ read, write, permalink }) {
   document.head.append(style);
   const preference = read('xpsMasonryEnabled');
   let enabled = preference !== false && preference !== 'false';
+  let maximumColumns = parseColumnLimit(read(MAX_COLUMNS_KEY));
   let active = null;
   let bridge = null;
   let timer = 0;
@@ -363,7 +389,7 @@ export function initMasonry({ read, write, permalink }) {
       if (!Number.isFinite(width) || width <= 0) return result;
       const dirty = state.geometryDirty || state.width !== width;
       if (dirty) {
-        state.geometry = placement.update(items, width);
+        state.geometry = placement.update(items, width, masonryColumnCount(width, maximumColumns));
         state.width = width;
         state.geometryDirty = false;
       }
@@ -485,8 +511,8 @@ export function initMasonry({ read, write, permalink }) {
     const width = container.clientWidth;
     containerWidth = width;
     if (!Number.isFinite(width) || width <= 0) return;
-    const columns = Math.max(1, Math.floor((width + 12) / 332));
-    const cardWidth = (width - (columns - 1) * 12) / columns;
+    const columns = masonryColumnCount(width, maximumColumns);
+    const cardWidth = masonryCardWidth(width, columns);
     const domCells = children.map((child) => {
       const posts = child.matches(POST) ? [child] : outerPosts(child);
       const post = posts[0];
@@ -559,7 +585,7 @@ export function initMasonry({ read, write, permalink }) {
       container.classList.add('xps-masonry-container');
       document.dispatchEvent(new Event('xps-masonry-change'));
     }
-    const provisional = renderer.update(items, width);
+    const provisional = renderer.update(items, width, columns);
     const mounted = new Map(cells.map((cell) => [cell.item?.key, cell.child]));
     // A disconnected cold window starts a new packed run. Refining its
     // unresolved prefix can then translate it, but cannot shear its columns.
@@ -603,9 +629,9 @@ export function initMasonry({ read, write, permalink }) {
       if (!item) return;
       const rect = child.getBoundingClientRect();
       const height = Math.ceil(rect.height);
-      if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow);
+      if (Number.isFinite(height) && height >= 0) renderer.measure(item.key, height, width, fullRow, columns);
     });
-    const layout = renderer.update(items, width);
+    const layout = renderer.update(items, width, columns);
     // Extra placeholders/duplicate DOM cells remain laid out, but cannot expand
     // the native candidate index space or become native identity owners.
     const geometry = bridge ? { ...layout, positions:layout.positions.slice(0, bridge.items.length),
@@ -628,7 +654,7 @@ export function initMasonry({ read, write, permalink }) {
     setStatus('active');
     if (layoutChanged) document.dispatchEvent(new Event('xps-masonry-change'));
     if (bridge) bridge.geometry = geometry;
-    if (geometryChanged) refresh(bridge.scroller);
+    if (bridge && (geometryChanged || bridge.geometryDirty)) refresh(bridge.scroller);
     checkNearEnd(container);
   }
 
@@ -675,6 +701,19 @@ export function initMasonry({ read, write, permalink }) {
   return {
     enabled: () => enabled,
     status: () => status,
+    maximumColumns: () => maximumColumns,
+    setMaximumColumns(value) {
+      const next = parseColumnLimit(value);
+      if (next === maximumColumns) return;
+      const width = active?.clientWidth;
+      const changesLayout = !active || masonryColumnCount(width, next) !== masonryColumnCount(width, maximumColumns);
+      maximumColumns = next;
+      write(MAX_COLUMNS_KEY, next ?? 'auto');
+      if (!enabled || !changesLayout) return;
+      if (bridge) bridge.geometryDirty = true;
+      if (!active) rejected = new WeakMap();
+      wake();
+    },
     toggle() { enabled = !enabled; write('xpsMasonryEnabled', enabled); if (!enabled) release(); else { rejected = new WeakMap(); retryCount = 0; } schedule(); return enabled; },
   };
 }
