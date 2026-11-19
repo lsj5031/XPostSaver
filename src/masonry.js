@@ -1,6 +1,6 @@
 // Shortest-column placement and instance-scroller integration adapted from
 // X.com Masonry View 1.7.7. See THIRD_PARTY_NOTICES.md (MIT).
-/* global unsafeWindow */
+/* global unsafeWindow, exportFunction, cloneInto */
 import css from './masonry.css';
 
 const POST = 'article[role="article"], [data-testid="tweet"]';
@@ -212,6 +212,17 @@ export function initMasonry({ read, write, permalink }) {
     if (entries.some((entry) => entry.target !== active) || active?.clientWidth !== containerWidth) wake();
   }) : null;
   const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const firefoxBridge = typeof unsafeWindow !== 'undefined' &&
+    typeof exportFunction === 'function' && typeof cloneInto === 'function';
+  const unwrap = (value) => value?.wrappedJSObject ?? value;
+  // Clone only our own data and empty containers. Keep native payloads (which
+  // can contain functions) and their identities by reference.
+  const pageValue = (value) => firefoxBridge ? unwrap(cloneInto(value, page)) : value;
+  function pageCopy(source, fields, preservePrototype = false) {
+    const target = pageValue({});
+    if (preservePrototype) Object.setPrototypeOf(target, Object.getPrototypeOf(source));
+    return Object.assign(target, source, fields);
+  }
 
   function release() {
     if (refreshFrame) cancelAnimationFrame(refreshFrame);
@@ -313,27 +324,31 @@ export function initMasonry({ read, write, permalink }) {
     const state = { scroller, fetch, originals: new Map(),
       items:/** @type {WindowItem[]} */ ([]), rendered:/** @type {WindowItem[]} */ ([]), geometry:{ positions:[], heights:[] },
       start:0, width:0, geometryDirty:true };
-    const replace = (name, installed) => {
+    const replace = (name, wrapper) => {
+      const installed = firefoxBridge ? unwrap(exportFunction(wrapper, page)) : wrapper;
       state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
       scroller[name] = installed;
     };
     const original = scroller._getRenderCandidates;
     const candidates = function (...args) {
-      const result = original.apply(scroller, args);
+      // Use our own invocation/array methods rather than passing sandbox
+      // argument arrays or callbacks to page-world built-ins.
+      const result = Reflect.apply(original, scroller, args);
       // An optional external engine may wrap this method after us. Once released,
       // such a retained wrapper must be a transparent native pass-through.
       if (bridge !== state) return result;
-      if (!Array.isArray(result?.allItemsWithPositions)) {
+      const positioned = result?.allItemsWithPositions;
+      if (!Array.isArray(positioned)) {
         reject(container, 'unsupported: candidate envelope');
         schedule();
         return result;
       }
-      const parsedEntries = result.allItemsWithPositions.map(masonryEntry);
+      const parsedEntries = Array.from(positioned, masonryEntry);
       const counts = new Map();
       for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
-      const next = result.allItemsWithPositions.map((entry, index) => {
-        const parsed = parsedEntries[index];
+      const next = parsedEntries.map((parsed, index) => {
         if (parsed && counts.get(parsed.key) === 1) return parsed;
+        const entry = positioned[index];
         // Opaque slots own geometry/measurements, never semantic post identity.
         // Keep them across rendered windows without requiring a native ID.
         return { key:typeof state.items[index]?.key === 'symbol' ? state.items[index].key : Symbol(`native slot ${index}`), entry,
@@ -359,16 +374,18 @@ export function initMasonry({ read, write, permalink }) {
       // Native positions remain native. A new cell's native height-cache miss
       // normally hides it until a later native update. We size mounted cells
       // before paint, so request visible cells without changing the cache.
-      const positioned = result.allItemsWithPositions;
       const windowChanged = slice.start !== state.start || slice.end - slice.start !== state.rendered.length;
       state.rendered = items.slice(slice.start, slice.end);
       state.start = slice.start;
       if (dirty || windowChanged) wake();
-      const demand = positioned.slice(slice.start, slice.end).map((entry) =>
-        entry?.visible === false && entry.itemId != null && Number.isFinite(entry.offset)
-          ? Object.assign(Object.create(Object.getPrototypeOf(entry)), entry, { visible:true }) : entry);
-      return { ...result, allItemsWithPositions:positioned, newRenderedItems:demand,
-        slice, arePreferredItemsRendered: true };
+      const demand = pageValue(/** @type {any[]} */ ([]));
+      for (let i = slice.start; i < slice.end; i++) {
+        const entry = positioned[i];
+        demand[i - slice.start] = entry?.visible === false && entry.itemId != null && Number.isFinite(entry.offset)
+          ? pageCopy(entry, { visible:true }, true) : entry;
+      }
+      return pageCopy(result, { allItemsWithPositions:positioned, newRenderedItems:demand,
+        slice:pageValue(slice), arePreferredItemsRendered:true });
     };
     try {
       replace('_getRenderCandidates', candidates);
@@ -379,16 +396,17 @@ export function initMasonry({ read, write, permalink }) {
       const update = scroller._updateRenderedItems;
       if (typeof update === 'function' && typeof scroller._getListOffset === 'function') {
         replace('_updateRenderedItems', function (anchor, ...rest) {
+          if (firefoxBridge) anchor = unwrap(anchor);
           if (bridge === state && Number.isFinite(anchor?.offset)) {
             try {
               const offset = scroller._getListOffset(anchor);
               if (Number.isFinite(offset) && offset !== 0) {
-                const aligned = { ...anchor, offset:anchor.offset - offset };
+                const aligned = pageCopy(anchor, { offset:anchor.offset - offset });
                 if (scroller._getListOffset(aligned) === 0) anchor = aligned;
               }
             } catch { /* Unknown anchor schema: preserve the native transaction. */ }
           }
-          return update.call(scroller, anchor, ...rest);
+          return Reflect.apply(update, scroller, [anchor, ...rest]);
         });
       }
       if (typeof scroller._getIsHeightsReady === 'function') replace('_getIsHeightsReady', () => true);
@@ -482,13 +500,14 @@ export function initMasonry({ read, write, permalink }) {
     const committedOffsets = new Map();
     // Requested and committed arrays need not coincide. Native state carries
     // the keys of the actual commit (including normalized envelopes).
-    if (Array.isArray(bridge?.scroller.state?.renderedItems)) {
+    const renderedItems = bridge?.scroller.state?.renderedItems;
+    if (Array.isArray(renderedItems)) {
       const byId = new Map();
       for (const item of bridge.items) {
         const id = item.entry?.itemId ?? item.entry;
         byId.set(id, byId.has(id) ? null : item);
       }
-      const committed = bridge.scroller.state.renderedItems.map((entry) => {
+      const committed = Array.from(renderedItems, (entry) => {
         const item = byId.get(entry?.itemId ?? entry);
         if (item && Number.isFinite(entry?.offset)) {
           committedOffsets.set(entry.offset, committedOffsets.has(entry.offset) ? null : item);

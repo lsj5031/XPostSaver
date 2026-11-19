@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Post Saver (Enhanced)
 // @namespace    http://tampermonkey.net/
-// @version      0.6.1
+// @version      0.6.2
 // @updateURL    https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @downloadURL  https://raw.githubusercontent.com/lsj5031/XPostSaver/master/x-post-saver-enhanced.user.js
 // @description  Adds local Save and Chinese fact-check buttons to posts on X.com; clicking 核查 automatically sends the selected post to Grok Auto (also at the top of long-form articles). Saved posts are stored locally and can be exported as JSONL (NDJSON). UI is set in Ioskeley Mono (OFL, ahatem/IoskeleyMono), embedded as a subset.
@@ -1279,6 +1279,15 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       if (entries.some((entry) => entry.target !== active) || active?.clientWidth !== containerWidth) wake();
     }) : null;
     const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const firefoxBridge = typeof unsafeWindow !== "undefined" && typeof exportFunction === "function" && typeof cloneInto === "function";
+    const unwrap = /* @__PURE__ */ __name((value) => value?.wrappedJSObject ?? value, "unwrap");
+    const pageValue = /* @__PURE__ */ __name((value) => firefoxBridge ? unwrap(cloneInto(value, page)) : value, "pageValue");
+    function pageCopy(source, fields, preservePrototype = false) {
+      const target = pageValue({});
+      if (preservePrototype) Object.setPrototypeOf(target, Object.getPrototypeOf(source));
+      return Object.assign(target, source, fields);
+    }
+    __name(pageCopy, "pageCopy");
     function release() {
       if (refreshFrame) cancelAnimationFrame(refreshFrame);
       refreshFrame = 0;
@@ -1394,25 +1403,27 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         width: 0,
         geometryDirty: true
       };
-      const replace = /* @__PURE__ */ __name((name, installed) => {
+      const replace = /* @__PURE__ */ __name((name, wrapper) => {
+        const installed = firefoxBridge ? unwrap(exportFunction(wrapper, page)) : wrapper;
         state.originals.set(name, { own: Object.hasOwn(scroller, name), value: scroller[name], installed });
         scroller[name] = installed;
       }, "replace");
       const original = scroller._getRenderCandidates;
       const candidates = /* @__PURE__ */ __name(function(...args) {
-        const result = original.apply(scroller, args);
+        const result = Reflect.apply(original, scroller, args);
         if (bridge !== state) return result;
-        if (!Array.isArray(result?.allItemsWithPositions)) {
+        const positioned = result?.allItemsWithPositions;
+        if (!Array.isArray(positioned)) {
           reject(container, "unsupported: candidate envelope");
           schedule();
           return result;
         }
-        const parsedEntries = result.allItemsWithPositions.map(masonryEntry);
+        const parsedEntries = Array.from(positioned, masonryEntry);
         const counts = /* @__PURE__ */ new Map();
         for (const item of parsedEntries) if (item) counts.set(item.key, (counts.get(item.key) || 0) + 1);
-        const next = result.allItemsWithPositions.map((entry, index) => {
-          const parsed = parsedEntries[index];
+        const next = parsedEntries.map((parsed, index) => {
           if (parsed && counts.get(parsed.key) === 1) return parsed;
+          const entry = positioned[index];
           return {
             key: typeof state.items[index]?.key === "symbol" ? state.items[index].key : /* @__PURE__ */ Symbol(`native slot ${index}`),
             entry,
@@ -1438,36 +1449,42 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
           reject(container, "unsupported: visible window exceeds safe limit");
           return result;
         }
-        const positioned = result.allItemsWithPositions;
         const windowChanged = slice.start !== state.start || slice.end - slice.start !== state.rendered.length;
         state.rendered = items.slice(slice.start, slice.end);
         state.start = slice.start;
         if (dirty || windowChanged) wake();
-        const demand = positioned.slice(slice.start, slice.end).map((entry) => entry?.visible === false && entry.itemId != null && Number.isFinite(entry.offset) ? Object.assign(Object.create(Object.getPrototypeOf(entry)), entry, { visible: true }) : entry);
-        return {
-          ...result,
+        const demand = pageValue(
+          /** @type {any[]} */
+          []
+        );
+        for (let i = slice.start; i < slice.end; i++) {
+          const entry = positioned[i];
+          demand[i - slice.start] = entry?.visible === false && entry.itemId != null && Number.isFinite(entry.offset) ? pageCopy(entry, { visible: true }, true) : entry;
+        }
+        return pageCopy(result, {
           allItemsWithPositions: positioned,
           newRenderedItems: demand,
-          slice,
+          slice: pageValue(slice),
           arePreferredItemsRendered: true
-        };
+        });
       }, "candidates");
       try {
         replace("_getRenderCandidates", candidates);
         const update = scroller._updateRenderedItems;
         if (typeof update === "function" && typeof scroller._getListOffset === "function") {
           replace("_updateRenderedItems", function(anchor, ...rest) {
+            if (firefoxBridge) anchor = unwrap(anchor);
             if (bridge === state && Number.isFinite(anchor?.offset)) {
               try {
                 const offset = scroller._getListOffset(anchor);
                 if (Number.isFinite(offset) && offset !== 0) {
-                  const aligned = { ...anchor, offset: anchor.offset - offset };
+                  const aligned = pageCopy(anchor, { offset: anchor.offset - offset });
                   if (scroller._getListOffset(aligned) === 0) anchor = aligned;
                 }
               } catch {
               }
             }
-            return update.call(scroller, anchor, ...rest);
+            return Reflect.apply(update, scroller, [anchor, ...rest]);
           });
         }
         if (typeof scroller._getIsHeightsReady === "function") replace("_getIsHeightsReady", () => true);
@@ -1574,13 +1591,14 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
       });
       let rendered = bridge?.rendered;
       const committedOffsets = /* @__PURE__ */ new Map();
-      if (Array.isArray(bridge?.scroller.state?.renderedItems)) {
+      const renderedItems = bridge?.scroller.state?.renderedItems;
+      if (Array.isArray(renderedItems)) {
         const byId = /* @__PURE__ */ new Map();
         for (const item of bridge.items) {
           const id = item.entry?.itemId ?? item.entry;
           byId.set(id, byId.has(id) ? null : item);
         }
-        const committed = bridge.scroller.state.renderedItems.map((entry) => {
+        const committed = Array.from(renderedItems, (entry) => {
           const item = byId.get(entry?.itemId ?? entry);
           if (item && Number.isFinite(entry?.offset)) {
             committedOffsets.set(entry.offset, committedOffsets.has(entry.offset) ? null : item);

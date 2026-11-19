@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- Keep virtual feeds in masonry on Firefox with Tampermonkey by exporting the
+  scroller hooks and returning page-owned objects. No new userscript grants.
+
 ## 0.6.0
 
 - Open a visible masonry post in a background tab by pressing its displayed
