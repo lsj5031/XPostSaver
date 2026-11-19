@@ -116,7 +116,6 @@ export function initMasonryNavigation() {
       toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'xps-nav-toggle';
-      toggle.textContent = '☰';
       ownAttribute(surface, 'id', surface.id || 'xps-native-navigation');
       toggle.setAttribute('aria-controls', surface.id);
       toggle.addEventListener('click', () => change(!open, open));

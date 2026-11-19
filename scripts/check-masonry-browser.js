@@ -86,7 +86,52 @@ async function blur(page) {
 }
 async function countCalls(page) { return page.evaluate(() => window.tabCalls.length); }
 
+async function measureToggle(theme) {
+  const page = await context.newPage();
+  try {
+    await page.emulateMedia({ colorScheme:theme });
+    await page.setViewportSize({ width:1440, height:900 });
+    const fixture = html.replace('class="timeline"', 'class="timeline xopt-masonry-container"');
+    await page.setContent(theme === 'light' ? fixture.replace('color:#e7e9ea; background:#000', 'color:#0f1419; background:#fff') : fixture);
+    await page.addScriptTag({ content:bundle });
+    const toggle = page.getByRole('button', { name:'Open navigation', exact:true });
+    await toggle.waitFor();
+    const png = await page.screenshot({ path:`${output}/toggle-${theme}.png`, clip:{ x:0, y:0, width:64, height:64 }, scale:'css' });
+    // Inspect painted rows, not the size or position of the CSS pseudo-element boxes.
+    return await toggle.evaluate(async (button, src) => {
+      const { x, y, width, height } = button.getBoundingClientRect();
+      const cx = x + width / 2, cy = y + height / 2;
+      const image = new Image();
+      image.src = src;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0);
+      const { data } = ctx.getImageData(cx - 12, cy - 12, 24, 24);
+      const rows = [];
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] === data[0] && data[i+1] === data[1] && data[i+2] === data[2]) continue;
+        const column = (i / 4) % 24 - 12;
+        const row = Math.floor(i / 96) - 12;
+        if (rows.at(-1)?.[0] === row) rows.at(-1)[2] = column + 1;
+        else rows.push([row, column, column + 1]);
+      }
+      return { rect:[x, y, width, height], center:[cx, cy], rows };
+    }, `data:image/png;base64,${png.toString('base64')}`);
+  } finally {
+    await page.close();
+  }
+}
+
 try {
+  const toggleGeometry = { light:await measureToggle('light'), dark:await measureToggle('dark') };
+  await writeFile(`${output}/toggle-geometry.json`, JSON.stringify(toggleGeometry, null, 2));
+  for (const [theme, { rect, rows }] of Object.entries(toggleGeometry)) {
+    assert.deepEqual(rect, [8,8,44,44], `${theme}: unchanged hit box`);
+    assert.deepEqual(rows, [-6,-5,-1,0,4,5].map((row) => [row,-10,10]), `${theme}: three centered bars`);
+  }
   for (const [kind, code] of [['source',source], ['bundle',bundle]]) {
     for (const order of ['upstream-first','saver-first']) {
       const prefix = `${kind}-${order}`;
@@ -145,6 +190,7 @@ try {
       assert.equal(await page.locator('header').evaluate((e) => e.contains(document.activeElement)), false);
       await toggle.click();
       assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+      assert.equal(await page.getByRole('button', { name:'Close navigation', exact:true }).count(), 1);
       assert.equal(await page.locator('.xps-masonry-key').count(), 0);
       assert.equal(await page.getByRole('link', { name:'Home', exact:true }).evaluate((e) => e === document.activeElement), true);
       const expanded = await measure(page, `${prefix}-03-drawer`, true);
@@ -166,6 +212,7 @@ try {
       await page.keyboard.press('Escape');
       assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
       assert.equal(await toggle.evaluate((e) => e === document.activeElement), true);
+      assert.equal(await toggle.evaluate((e) => e.matches(':focus-visible')), true);
       await page.getByRole('dialog', { includeHidden:true }).evaluate((e) => e.remove());
       await page.keyboard.press('Enter');
       assert.equal(await toggle.getAttribute('aria-expanded'), 'true');

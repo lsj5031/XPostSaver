@@ -828,12 +828,26 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
   width: 44px;
   height: 44px;
   z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: 1px solid #8886;
   border-radius: 999px;
   background: var(--xps-nav-background, Canvas);
   color: var(--xps-nav-color, CanvasText);
-  font: 24px sans-serif;
   cursor: pointer;
+}
+.xps-nav-toggle::before,
+.xps-nav-toggle::after {
+  content: "";
+  grid-area: 1 / 1;
+  width: 20px;
+  border-top: 2px solid currentColor;
+}
+.xps-nav-toggle::before {
+  box-sizing: border-box;
+  height: 12px;
+  border-bottom: 2px solid currentColor;
 }
 .xps-nav-toggle:focus-visible { outline: 2px solid #1d9bf0; outline-offset: 1px; }
 `;
@@ -970,7 +984,6 @@ html.xps-masonry-nav [data-testid="primaryColumn"] {
         toggle = document.createElement("button");
         toggle.type = "button";
         toggle.className = "xps-nav-toggle";
-        toggle.textContent = "\u2630";
         ownAttribute(surface, "id", surface.id || "xps-native-navigation");
         toggle.setAttribute("aria-controls", surface.id);
         toggle.addEventListener("click", () => change(!open, open));
