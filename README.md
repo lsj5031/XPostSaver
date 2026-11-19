@@ -1,6 +1,6 @@
 # X Post Saver (Enhanced)
 
-X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI that turns exported JSONL into Markdown dossiers and CSV indexes.
+X Post Saver is a userscript for saving posts on X.com locally and exporting them as JSONL.
 
 ## Demo
 
@@ -10,7 +10,8 @@ X Post Saver is a userscript for saving posts on X.com locally, plus a Rust CLI 
 
 - `x-post-saver-enhanced.user.js`: production userscript you install in Tampermonkey/Violentmonkey/Greasemonkey.
 - `src/`: userscript source code.
-- `tools/xps-render-rs`: standalone Rust CLI (`xps-render`) for postprocessing exported JSONL.
+
+The [retired Rust converter](https://github.com/lsj5031/XPostSaver/tree/0b54011498e965f5606869153f400b8fcb093425/tools/xps-render-rs) remains available in Git history.
 
 ## Userscript Features
 
@@ -174,48 +175,9 @@ not restore, merge, move, or restyle quotes. Own-post keyboard targets exclude
 native inline quote timestamps as well as nested quote articles. A quoted
 permalink is never substituted for the enclosing post's own shortcut target.
 
-## Rust CLI (`xps-render`) Features
-
-`xps-render` ingests exported JSONL and renders per-post Markdown plus indexes.
-
-### Input Processing
-
-- Reads JSONL line-by-line.
-- Modes:
-  - default (lenient): skip malformed lines and record them in `parse-errors.csv`
-  - `--strict`: fail on first malformed line
-- Normalizes/sanitizes fields similarly to userscript logic:
-  - trims URLs
-  - normalizes links/media arrays
-  - resolves `id` from URL when missing
-  - removes invalid objects
-- Deduplicates using `id` first, then canonicalized URL key.
-
-### Output
-
-Given `--out <dir>`, writes:
-
-- `<dir>/posts/<NNNN>-<id-or-fallback>.md`
-- `<dir>/index.csv`
-- `<dir>/parse-errors.csv` (only when parse errors exist)
-
-Rendering details:
-
-- Preserves input/save order.
-- Markdown includes sections:
-  - `Text`
-  - `Links`
-  - `Media`
-  - `Quoted Post` (when present)
-  - `Source URL`
-- YAML front matter is included by default and can be disabled with `--no-frontmatter`.
-- If `<dir>/posts` already exists, it is replaced for a clean render.
-
 ## Installation
 
 Current userscript release: **0.5.18**. See [changelog](CHANGELOG.md).
-
-### Userscript
 
 1. Install a userscript manager:
    - [Tampermonkey](https://www.tampermonkey.net/) (recommended)
@@ -225,13 +187,7 @@ Current userscript release: **0.5.18**. See [changelog](CHANGELOG.md).
    This is the only userscript needed, including masonry. Remove the former
    separate masonry script if installed.
 
-### Rust CLI
-
-Prerequisite: Rust toolchain with `cargo` installed.
-
 ## Usage
-
-### Userscript
 
 1. Open X.com.
 2. Click `Save` on posts you want to keep.
@@ -239,20 +195,6 @@ Prerequisite: Rust toolchain with `cargo` installed.
    - `Export` to JSONL
    - `Copy` to clipboard
    - `Clear` to remove all saves
-
-### Rust CLI
-
-```bash
-cargo run --manifest-path tools/xps-render-rs/Cargo.toml -- \
-  --in ./x-saved-posts-2026-02-13.jsonl \
-  --out ./rendered
-```
-
-Options:
-
-- `--strict`: fail-fast on malformed JSONL
-- `--no-frontmatter`: omit YAML front matter in markdown files
-- `--prefix <value>`: fallback filename prefix when `id` is missing (default: `post`)
 
 ## JSONL Format
 
@@ -278,8 +220,6 @@ Top-level fields:
 - `quoted`: nested quoted post object or `null`
 
 ## Development
-
-### Userscript
 
 - Install JavaScript development dependencies:
 
@@ -414,14 +354,6 @@ node scripts/check-masonry-quotes-browser.js
   focused own-post w targets. Evidence is under `XPS_EVIDENCE/v3-quotes/final/`.
   The linked-card fixture is synthetic, not a captured live-X representation;
   no React-derived quote navigation, video decoding, or live account is tested.
-
-### Rust CLI
-
-- Run Rust tests:
-
-```bash
-cargo test --manifest-path tools/xps-render-rs/Cargo.toml
-```
 
 ## Privacy
 

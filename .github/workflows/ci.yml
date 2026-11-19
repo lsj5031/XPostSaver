@@ -26,9 +26,3 @@ jobs:
 
       - name: Check generated userscript
         run: npm run build:check
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run Rust tests
-        run: cargo test --manifest-path tools/xps-render-rs/Cargo.toml
