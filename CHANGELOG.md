@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3
+
+- Replace the Move panel button’s repeating dots with a compact six-dot grip
+  without changing its hit area or movement controls.
+
 ## 0.6.2
 
 - Keep virtual feeds in masonry on Firefox with Tampermonkey by exporting the

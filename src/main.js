@@ -475,17 +475,29 @@ function ensureStyles() {
 
     #${UI.panelId} > .xps-drag-handle {
       appearance: none;
+      position: relative;
       align-self: stretch;
       width: 16px;
       min-height: 32px;
       padding: 0;
       border: 0;
       border-radius: 6px;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.72) 1.25px, transparent 1.5px)
-        center / 6px 6px;
+      background: transparent;
       cursor: grab;
       touch-action: none;
       user-select: none;
+    }
+
+    #${UI.panelId} > .xps-drag-handle::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 8px;
+      height: 12px;
+      background: radial-gradient(circle, rgba(255, 255, 255, 0.72) 0.75px, transparent 1.25px)
+        0 0 / 4px 4px;
+      pointer-events: none;
     }
 
     #${UI.panelId}[data-dragging="1"] > .xps-drag-handle,
